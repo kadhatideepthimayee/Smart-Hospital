@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "96335986313",
+    "project_id": "smarthospitalqueue-9091e",
+    "storage_bucket": "smarthospitalqueue-9091e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:96335986313:android:f47f5bc289de56fe5e1058",
+        "android_client_info": {
+          "package_name": "com.example.smarthospitalqueue"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "96335986313-7057ddence04ird1nve7n8n7nfetacaq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.smarthospitalqueue",
+            "certificate_hash": "0f3092e904590879bdc4065e98ca93ae054bd330"
+          }
+        },
+        {
+          "client_id": "96335986313-n7l78dqu7hil7jjghvapjqnibi6mkks9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDnVgHuoifcd2Xi6ozVUN2IwUVcDKtIhM8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "96335986313-n7l78dqu7hil7jjghvapjqnibi6mkks9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
