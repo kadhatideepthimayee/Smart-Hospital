@@ -1,0 +1,26 @@
+# Migration to MongoDB Task List
+
+- [x] Setup Node.js backend server (`/backend`)
+    - [x] Create `package.json` and install dependencies
+    - [x] Create `.env` file with MongoDB connection string
+    - [x] Create database models (User, DoctorProfile, Appointment, Notification)
+    - [x] Create API routes (auth, doctor, appointment, admin)
+    - [x] Create main `server.js` file
+- [x] Configure Android App Dependencies
+    - [x] Add Retrofit and OkHttp dependencies to `app/build.gradle.kts`
+- [x] Implement Network Layer on Android
+    - [x] Create `SessionManager` for storing JWT tokens and user session data
+    - [x] Create `ApiService` interface defining all API endpoints
+    - [x] Create `RetrofitClient` singleton
+- [x] Refactor Repositories to use MongoDB API
+    - [x] Refactor `AuthRepository` and `UserRepository`
+    - [x] Refactor `AdminRepository`
+    - [x] Refactor `DoctorRepository`
+    - [x] Refactor `AppointmentRepository`
+    - [x] Refactor `DashboardRepository`
+- [x] Update ViewModels and Navigation
+    - [x] Refactor `AppNavigation.kt` to use `SessionManager` instead of Firebase Auth
+    - [x] Refactor any ViewModels with direct references to `FirebaseAuth` or `FirebaseFirestore`
+- [ ] Verification and Testing
+    - [ ] Run Node.js backend locally
+    - [ ] Run Android app and verify registration, login, profile setup, and appointment booking
