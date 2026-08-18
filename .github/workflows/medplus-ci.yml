@@ -63,25 +63,45 @@ jobs:
           cat <<EOF > app/google-services.json
           {
             "project_info": {
-              "project_number": "123456789",
-              "project_id": "dummy-project"
+              "project_number": "366692040766",
+              "project_id": "medplus-a50ca",
+              "storage_bucket": "medplus-a50ca.firebasestorage.app"
             },
             "client": [
               {
                 "client_info": {
-                  "mobilesdk_app_id": "1:123456789:android:123456789",
+                  "mobilesdk_app_id": "1:366692040766:android:fea6231f06287d7de5516f",
                   "android_client_info": {
                     "package_name": "com.example.medplus"
                   }
                 },
+                "oauth_client": [
+                  {
+                    "client_id": "366692040766-jauva32pa5hi80a0lhgv6utti5c88f0l.apps.googleusercontent.com",
+                    "client_type": 1,
+                    "android_info": {
+                      "package_name": "com.example.medplus",
+                      "certificate_hash": "0f3092e904590879bdc4065e98ca93ae054bd330"
+                    }
+                  },
+                  {
+                    "client_id": "366692040766-iduuu65jevefkpt2n04na5flh294jpec.apps.googleusercontent.com",
+                    "client_type": 3
+                  }
+                ],
                 "api_key": [
                   {
-                    "current_key": "dummy_api_key"
+                    "current_key": "none"
                   }
                 ],
                 "services": {
                   "appinvite_service": {
-                    "other_platform_oauth_client": []
+                    "other_platform_oauth_client": [
+                      {
+                        "client_id": "366692040766-iduuu65jevefkpt2n04na5flh294jpec.apps.googleusercontent.com",
+                        "client_type": 3
+                      }
+                    ]
                   }
                 }
               }
