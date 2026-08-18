@@ -4,6 +4,7 @@ const auth = require('../middleware/auth');
 const DoctorProfile = require('../models/DoctorProfile');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
+const Appointment = require('../models/Appointment');
 
 // Middleware to check if user is admin
 const adminCheck = (req, res, next) => {
@@ -166,6 +167,61 @@ router.get('/notifications/unread-count', [auth, adminCheck], async (req, res) =
       isRead: false
     });
     res.json({ count });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+});
+
+// @route   GET api/admin/patients
+// @desc    Get all patients
+// @access  Private (Admin)
+router.get('/patients', [auth, adminCheck], async (req, res) => {
+  try {
+    const patients = await User.find({ role: 'PATIENT' }).select('-password').sort({ createdAt: -1 });
+    const mapped = patients.map(p => {
+      const obj = p.toObject ? p.toObject() : p;
+      obj.id = obj._id.toString();
+      return obj;
+    });
+    res.json(mapped);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send('Server error');
+  }
+});
+
+// @route   GET api/admin/appointments
+// @desc    Get all appointments
+// @access  Private (Admin)
+router.get('/appointments', [auth, adminCheck], async (req, res) => {
+  try {
+    const appointments = await Appointment.find().sort({ date: -1, time: 1 });
+    const populated = [];
+    for (let appt of appointments) {
+      const apptObj = appt.toObject ? appt.toObject() : appt;
+      apptObj.id = apptObj._id.toString();
+      
+      const patientUser = await User.findById(apptObj.patientId);
+      if (patientUser) {
+        apptObj.patientName = patientUser.fullName;
+        apptObj.patientEmail = patientUser.email;
+        apptObj.patientPhone = patientUser.phone;
+      }
+      
+      const doctorUser = await User.findById(apptObj.doctorId);
+      if (doctorUser) {
+        apptObj.doctorName = doctorUser.fullName;
+      } else {
+        const doctorProfile = await DoctorProfile.findOne({ uid: apptObj.doctorId });
+        if (doctorProfile) {
+          apptObj.doctorName = doctorProfile.fullName;
+        }
+      }
+      
+      populated.push(apptObj);
+    }
+    res.json(populated);
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server error');

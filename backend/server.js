@@ -1,5 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
+require('./middleware/localDbFallback');
 const cors = require('cors');
 require('dotenv').config();
 
@@ -62,18 +63,62 @@ const seedAdminUser = async () => {
   }
 };
 
-mongoose
-  .connect(dbURI)
-  .then(() => {
-    console.log('MongoDB Connected Successfully!');
+const connectDB = async () => {
+  try {
+    await mongoose.connect(dbURI);
+    console.log('MongoDB Connected Successfully to MongoDB Atlas!');
     seedAdminUser();
-  })
-  .catch(err => {
-    console.error('MongoDB connection error:', err.message);
-    process.exit(1);
-  });
+  } catch (err) {
+    console.error('========================================================================');
+    console.error('MongoDB Atlas Connection Error:', err.message);
+    console.error('Attempting fallback to local MongoDB (mongodb://127.0.0.1:27017/medplus)...');
+    
+    const localURI = 'mongodb://127.0.0.1:27017/medplus';
+    try {
+      await mongoose.connect(localURI);
+      console.log('MongoDB Connected Successfully to local MongoDB!');
+      seedAdminUser();
+    } catch (localErr) {
+      console.error('Local MongoDB Connection also failed:', localErr.message);
+      console.log('MongoDB Atlas and local servers are unavailable.');
+      console.log('Falling back to local JSON file-based database...');
+      await seedAdminUser();
+      console.error('========================================================================');
+      console.error('Keep-Alive: The server is kept running so the clients do not encounter');
+      console.error('a raw Network Connection Error. Fallback local JSON database is active.');
+      console.error('TO FIX DATABASE SERVERS:');
+      console.error('1. Whitelist your current IP address in your MongoDB Atlas Dashboard:');
+      console.error('   https://www.mongodb.com/docs/atlas/security-whitelist/');
+      console.error('2. Alternatively, install and run MongoDB locally:');
+      console.error('   MONGODB_URI=mongodb://127.0.0.1:27017/medplus');
+      console.error('========================================================================');
+    }
+  }
+};
+
+connectDB();
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server started on port ${PORT}`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error('========================================================================');
+    console.error(`ERROR: Port ${PORT} is already in use by another process.`);
+    console.error('This prevents the MedPlus backend from starting, causing "Network Errors"');
+    console.error('in both the web and Android applications.');
+    console.error('');
+    console.error('TO FIX THIS:');
+    console.error('1. Open command prompt (cmd) as Administrator.');
+    console.error(`2. Run: netstat -ano | findstr :${PORT}`);
+    console.error('3. Note the PID (the number on the far right).');
+    console.error('4. Kill that process: taskkill /PID <PID> /F');
+    console.error('5. Restart this script.');
+    console.error('========================================================================');
+    process.exit(1);
+  } else {
+    console.error('Server error:', err);
+  }
 });

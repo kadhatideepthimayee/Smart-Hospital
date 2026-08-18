@@ -14,6 +14,7 @@ class SessionManager(context: Context) {
         private const val KEY_NAME = "user_name"
         private const val KEY_PHONE = "user_phone"
         private const val KEY_PROFILE_IMAGE = "user_profile_image"
+        private const val KEY_API_URL = "custom_api_url"
         
         // Single instance helper
         @Volatile
@@ -37,6 +38,44 @@ class SessionManager(context: Context) {
             putString(KEY_PROFILE_IMAGE, profileImage)
             apply()
         }
+    }
+
+    fun getApiUrl(): String {
+        return prefs.getString(KEY_API_URL, null) ?: getDefaultApiUrl()
+    }
+
+    fun saveApiUrl(url: String) {
+        // Ensure trailing slash
+        val cleanUrl = if (url.endsWith("/")) url else "$url/"
+        prefs.edit().putString(KEY_API_URL, cleanUrl).apply()
+    }
+
+    private fun getDefaultApiUrl(): String {
+        return if (isEmulator()) {
+            "http://10.0.2.2:5000/"
+        } else {
+            "http://127.0.0.1:5000/"
+        }
+    }
+
+    private fun isEmulator(): Boolean {
+        val buildFingerprint = android.os.Build.FINGERPRINT ?: ""
+        val buildModel = android.os.Build.MODEL ?: ""
+        val buildManufacturer = android.os.Build.MANUFACTURER ?: ""
+        val buildProduct = android.os.Build.PRODUCT ?: ""
+        return (buildFingerprint.startsWith("generic")
+                || buildFingerprint.startsWith("unknown")
+                || buildModel.contains("google_sdk")
+                || buildModel.contains("Emulator")
+                || buildModel.contains("Android SDK built for x86")
+                || buildManufacturer.contains("Genymotion")
+                || buildProduct.contains("sdk_gphone")
+                || buildProduct.contains("google_sdk")
+                || buildProduct.contains("sdk")
+                || buildProduct.contains("sdk_x86")
+                || buildProduct.contains("vbox86p")
+                || buildProduct.contains("emulator")
+                || buildProduct.contains("simulator"))
     }
 
     fun getToken(): String? = prefs.getString(KEY_TOKEN, null)

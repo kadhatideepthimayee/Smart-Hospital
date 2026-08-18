@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.example.medplus.ui.theme.*
+import com.example.medplus.data.network.SessionManager
 
 // ════════════════════════════════════════════════════════════════════════════
 //  LOGIN SCREEN
@@ -58,11 +59,14 @@ fun LoginScreen(
     var emailError by remember { mutableStateOf<String?>(null) }
     var passwordError by remember { mutableStateOf<String?>(null) }
     var showRoleDialog by remember { mutableStateOf(false) }
+    var showServerConfigDialog by remember { mutableStateOf(false) }
 
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val scrollState = rememberScrollState()
     val context = LocalContext.current
+    val sessionManager = remember { SessionManager.getInstance(context) }
+    var tempServerUrl by remember { mutableStateOf(sessionManager.getApiUrl()) }
 
     LaunchedEffect(Unit) {
         val prefs = context.getSharedPreferences("login_prefs", Context.MODE_PRIVATE)
@@ -304,13 +308,68 @@ fun LoginScreen(
                 )
             }
 
+            if (showServerConfigDialog) {
+                AlertDialog(
+                    onDismissRequest = { showServerConfigDialog = false },
+                    title = { Text("Server Configuration", fontWeight = FontWeight.Bold) },
+                    text = {
+                        Column {
+                            Text(
+                                "Enter the backend API server URL (include http:// and port). Default is resolved dynamically.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = SecondaryText
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            OutlinedTextField(
+                                value = tempServerUrl,
+                                onValueChange = { tempServerUrl = it },
+                                label = { Text("Server URL") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(
+                                onClick = {
+                                    context.getSharedPreferences("medplus_session", Context.MODE_PRIVATE).edit().remove("custom_api_url").apply()
+                                    tempServerUrl = sessionManager.getApiUrl()
+                                }
+                            ) {
+                                Text("Reset to Default")
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (tempServerUrl.isNotBlank()) {
+                                    sessionManager.saveApiUrl(tempServerUrl.trim())
+                                }
+                                showServerConfigDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Primary)
+                        ) {
+                            Text("Save")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                showServerConfigDialog = false
+                            }
+                        ) {
+                            Text("Cancel")
+                        }
+                    }
+                )
+            }
+
             Spacer(modifier = Modifier.height(40.dp))
 
             // ── FOOTER: CREATE ACCOUNT ────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 32.dp),
+                    .padding(bottom = 8.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -335,8 +394,23 @@ fun LoginScreen(
                         .padding(horizontal = 4.dp, vertical = 8.dp) // Increase touch target
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Server Configuration",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = Primary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(enabled = !isEmailLoading && !isGoogleLoading) {
+                        tempServerUrl = sessionManager.getApiUrl()
+                        showServerConfigDialog = true
+                    }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }

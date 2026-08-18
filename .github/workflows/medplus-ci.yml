@@ -57,6 +57,39 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Create Dummy google-services.json
+        run: |
+          mkdir -p app
+          cat <<EOF > app/google-services.json
+          {
+            "project_info": {
+              "project_number": "123456789",
+              "project_id": "dummy-project"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:123456789:android:123456789",
+                  "android_client_info": {
+                    "package_name": "com.example.medplus"
+                  }
+                },
+                "api_key": [
+                  {
+                    "current_key": "dummy_api_key"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          EOF
+
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
