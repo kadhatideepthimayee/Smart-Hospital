@@ -5,28 +5,29 @@ import com.example.medplus.model.Appointment
 import com.example.medplus.model.DoctorFeedback
 import com.example.medplus.model.DoctorProfile
 import com.example.medplus.model.QueueItem
-import com.example.medplus.data.network.*
-import com.example.medplus.dashboard.model.LiveQueueInfo
 import com.example.medplus.auth.model.User
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
+import com.google.firebase.Timestamp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Repository to handle doctor-related data operations in MongoDB.
+ * Repository to handle doctor-related data operations in Firestore.
  */
 class DoctorRepository {
 
     private val context = com.google.firebase.FirebaseApp.getInstance().applicationContext
-    private val apiService = RetrofitClient.getApiService(context)
+    private val firestore: FirebaseFirestore get() = FirebaseFirestore.getInstance()
 
     /**
      * Converts a document Uri to a Base64 string with Data URI prefix.
-     * Keep unchanged since it runs locally and returns base64 string.
      */
     fun uploadDoctorDocument(
         fileUri: Uri,
@@ -98,40 +99,12 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                // Fetch the current doctor profile to retain fields, setting status to PENDING
-                val profileResponse = apiService.getDoctorProfile()
-                if (profileResponse.isSuccessful) {
-                    val profile = profileResponse.body()
-                    if (profile != null) {
-                        val updatedProfile = profile.copy(verificationStatus = "PENDING")
-                        val response = apiService.setupDoctorProfile(updatedProfile)
-                        if (response.isSuccessful) {
-                            withContext(Dispatchers.Main) {
-                                onSuccess()
-                            }
-                        } else {
-                            withContext(Dispatchers.Main) {
-                                onFailure("Failed to submit verification request")
-                            }
-                        }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            onFailure("Doctor profile not found. Please complete profile details first.")
-                        }
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to retrieve doctor profile details")
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to submit verification request")
-                }
+        firestore.collection("doctor_profiles").document(uid)
+            .update("verificationStatus", "PENDING")
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to submit verification request")
             }
-        }
     }
 
     /**
@@ -142,24 +115,11 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.setupDoctorProfile(profile)
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess()
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to save doctor profile: ${response.message()}")
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to save profile")
-                }
+        firestore.collection("doctor_profiles").document(profile.uid).set(profile, SetOptions.merge())
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to save doctor profile")
             }
-        }
     }
 
     /**
@@ -170,24 +130,17 @@ class DoctorRepository {
         onSuccess: (DoctorProfile?) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getDoctorProfileByUid(uid)
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess(response.body())
-                    }
+        firestore.collection("doctor_profiles").document(uid).get()
+            .addOnSuccessListener { doc ->
+                if (doc.exists()) {
+                    onSuccess(doc.toObject(DoctorProfile::class.java))
                 } else {
-                    withContext(Dispatchers.Main) {
-                        onSuccess(null)
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to fetch profile")
+                    onSuccess(null)
                 }
             }
-        }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to fetch profile")
+            }
     }
 
     /**
@@ -198,30 +151,23 @@ class DoctorRepository {
         onSuccess: (List<DoctorProfile>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getVerifiedDoctors()
-                if (response.isSuccessful) {
-                    val doctors = response.body() ?: emptyList()
-                    val filtered = if (department.isNotBlank()) {
-                        doctors.filter { it.department.equals(department, ignoreCase = true) }
-                    } else {
-                        doctors
-                    }
-                    withContext(Dispatchers.Main) {
-                        onSuccess(filtered)
-                    }
+        firestore.collection("doctor_profiles")
+            .whereEqualTo("verificationStatus", "VERIFIED")
+            .get()
+            .addOnSuccessListener { querySnapshot ->
+                val doctors = querySnapshot.documents.mapNotNull { doc ->
+                    doc.toObject(DoctorProfile::class.java)
+                }
+                val filtered = if (department.isNotBlank()) {
+                    doctors.filter { it.department.equals(department, ignoreCase = true) }
                 } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to fetch verified doctors")
-                    }
+                    doctors
                 }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to fetch doctors")
-                }
+                onSuccess(filtered)
             }
-        }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to fetch verified doctors")
+            }
     }
 
     fun addDoctorFeedback(
@@ -232,31 +178,22 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val request = com.example.medplus.data.network.SubmitFeedbackRequest(
-                    doctorId = doctorId,
-                    rating = rating,
-                    feedback = feedback,
-                    appointmentId = appointmentId
-                )
-                val response = apiService.submitFeedback(request)
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess()
-                    }
-                } else {
-                    val errorMsg = response.errorBody()?.string() ?: "Failed to submit feedback"
-                    withContext(Dispatchers.Main) {
-                        onFailure(errorMsg)
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to submit feedback")
-                }
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val feedbackMap = hashMapOf(
+            "doctorId" to doctorId,
+            "patientId" to currentUid,
+            "rating" to rating,
+            "feedback" to feedback,
+            "appointmentId" to appointmentId,
+            "createdAt" to Timestamp.now()
+        )
+
+        firestore.collection("feedback")
+            .add(feedbackMap)
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to submit feedback")
             }
-        }
     }
 
     /**
@@ -269,31 +206,22 @@ class DoctorRepository {
         onResult: (Boolean) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getDoctorAppointments()
-                if (response.isSuccessful) {
-                    val exists = response.body()?.any {
-                        it.doctorId == doctorId && it.date == date && it.time == time && it.status == "UPCOMING"
-                    } ?: false
-                    withContext(Dispatchers.Main) {
-                        onResult(exists)
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onResult(false)
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to verify slot availability")
-                }
+        firestore.collection("appointments")
+            .whereEqualTo("doctorId", doctorId)
+            .whereEqualTo("date", date)
+            .whereEqualTo("time", time)
+            .whereEqualTo("status", "UPCOMING")
+            .get()
+            .addOnSuccessListener { querySnapshot ->
+                onResult(!querySnapshot.isEmpty)
             }
-        }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to verify slot availability")
+            }
     }
 
     /**
-     * Creates a new appointment in MongoDB.
+     * Creates a new appointment in Firestore.
      */
     fun createAppointment(
         doctorId: String,
@@ -304,56 +232,162 @@ class DoctorRepository {
         onSuccess: (Appointment) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val request = BookAppointmentRequest(
-                    doctorId = doctorId,
-                    doctorName = doctorName,
-                    department = department,
-                    date = date,
-                    time = time,
-                    reason = "Regular consultation"
-                )
-                val response = apiService.bookAppointment(request)
-                if (response.isSuccessful) {
-                    val appointment = response.body()
-                    if (appointment != null) {
-                        withContext(Dispatchers.Main) {
-                            onSuccess(appointment)
-                        }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            onFailure("Appointment confirmation returned empty response")
-                        }
-                    }
-                } else {
-                    val errorMsg = response.errorBody()?.string() ?: "Failed to book appointment"
-                    withContext(Dispatchers.Main) {
-                        onFailure(errorMsg)
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to create appointment")
-                }
-            }
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        if (currentUid.isEmpty()) {
+            onFailure("User not logged in")
+            return
         }
+
+        // Fetch patient details first
+        firestore.collection("users").document(currentUid).get()
+            .addOnSuccessListener { patientDoc ->
+                val patientName = patientDoc.getString("fullName") ?: "Patient"
+
+                // Fetch doctor profile to get consultationStartTime and slotDuration
+                firestore.collection("doctor_profiles").document(doctorId).get()
+                    .addOnSuccessListener { doctorDoc ->
+                        val startTimeStr = doctorDoc.getString("consultationStartTime") ?: "09:00"
+                        val slotDuration = doctorDoc.getLong("slotDuration")?.toInt() ?: 15
+
+                        // Query existing appointments for doctor on this date to count bookings for the hour
+                        firestore.collection("appointments")
+                            .whereEqualTo("doctorId", doctorId)
+                            .whereEqualTo("date", date)
+                            .get()
+                            .addOnSuccessListener { querySnapshot ->
+                                val dayBookings = querySnapshot.documents
+                                val existingBookings = dayBookings.count { it.getString("time") == time }
+
+                                val diffMinutes = timeToMinutes(time) - timeToMinutes(startTimeStr)
+                                val baseToken = (diffMinutes / slotDuration).coerceAtLeast(1)
+                                val tokenNumber = (baseToken + existingBookings).toString()
+
+                                val newAppointmentRef = firestore.collection("appointments").document()
+                                val newAppointment = Appointment(
+                                    appointmentId = newAppointmentRef.id,
+                                    patientId = currentUid,
+                                    patientName = patientName,
+                                    doctorId = doctorId,
+                                    doctorName = doctorName,
+                                    department = department,
+                                    date = date,
+                                    time = time,
+                                    status = "UPCOMING",
+                                    tokenNumber = tokenNumber,
+                                    createdAt = Timestamp.now()
+                                )
+
+                                newAppointmentRef.set(newAppointment)
+                                    .addOnSuccessListener {
+                                        // Also create a queue item for this appointment
+                                        val queueRef = firestore.collection("queue").document()
+                                        val queueItem = QueueItem(
+                                            queueId = queueRef.id,
+                                            appointmentId = newAppointmentRef.id,
+                                            patientId = currentUid,
+                                            patientName = patientName,
+                                            doctorId = doctorId,
+                                            tokenNumber = tokenNumber,
+                                            status = "WAITING",
+                                            isActive = true,
+                                            date = date
+                                        )
+                                        queueRef.set(queueItem)
+                                            .addOnSuccessListener {
+                                                // 1. Create a notification for the patient
+                                                val notificationRef = firestore.collection("notifications").document()
+                                                val notificationData = hashMapOf(
+                                                    "userId" to currentUid,
+                                                    "title" to "Appointment Booked",
+                                                    "message" to "Your appointment with $doctorName ($department) is confirmed for $date at $time.",
+                                                    "type" to "APPOINTMENT",
+                                                    "read" to false,
+                                                    "isRead" to false,
+                                                    "timestamp" to com.google.firebase.Timestamp.now()
+                                                )
+                                                notificationRef.set(notificationData)
+
+                                                // 2. Create a notification for the doctor
+                                                val doctorNotificationRef = firestore.collection("notifications").document()
+                                                val doctorNotificationData = hashMapOf(
+                                                    "userId" to doctorId,
+                                                    "title" to "New Appointment Booked",
+                                                    "message" to "New appointment booked by $patientName for $date at $time.",
+                                                    "type" to "APPOINTMENT",
+                                                    "read" to false,
+                                                    "isRead" to false,
+                                                    "timestamp" to com.google.firebase.Timestamp.now()
+                                                )
+                                                doctorNotificationRef.set(doctorNotificationData)
+
+                                                // 3. Create an activity log for the patient
+                                                val activityRef = firestore.collection("activities").document()
+                                                val timestampStr = java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.US).format(java.util.Date())
+                                                val activityData = hashMapOf(
+                                                    "userId" to currentUid,
+                                                    "type" to "APPOINTMENT",
+                                                    "title" to "Booked Appointment",
+                                                    "description" to "Booked with $doctorName for $date at $time.",
+                                                    "timestamp" to timestampStr
+                                                )
+                                                activityRef.set(activityData)
+
+                                                onSuccess(newAppointment)
+                                            }
+                                            .addOnFailureListener { e ->
+                                                onFailure(e.message ?: "Failed to initialize queue item")
+                                            }
+                                    }
+                                    .addOnFailureListener { e ->
+                                        onFailure(e.message ?: "Failed to book appointment")
+                                    }
+                            }
+                            .addOnFailureListener { e ->
+                                onFailure(e.message ?: "Failed to count appointments")
+                            }
+                    }
+                    .addOnFailureListener { e ->
+                        onFailure(e.message ?: "Failed to fetch doctor profile details")
+                    }
+            }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to fetch patient information")
+            }
     }
 
     /**
-     * Listen for real-time full queue updates for the doctor (via polling).
+     * Listen for real-time full queue updates for the doctor (via Firestore snapshots).
      */
-    fun getDoctorQueueFlow(date: String? = null): Flow<List<QueueItem>> = flow {
-        while (true) {
-            try {
-                val response = apiService.getDoctorQueue(date)
-                if (response.isSuccessful) {
-                    emit(response.body() ?: emptyList())
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("DOCTOR_QUEUE_DEBUG", "Polling doctor queue failed", e)
+    fun getDoctorQueueFlow(date: String? = null): Flow<List<QueueItem>> = callbackFlow {
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        if (currentUid.isEmpty()) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        var query = firestore.collection("queue")
+            .whereEqualTo("doctorId", currentUid)
+            .whereEqualTo("isActive", true)
+
+        if (date != null) {
+            query = query.whereEqualTo("date", date)
+        }
+
+        val registration = query.addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                return@addSnapshotListener
             }
-            delay(5000)
+            if (snapshot != null) {
+                val list = snapshot.documents.mapNotNull { doc ->
+                    doc.toObject(QueueItem::class.java)?.copy(queueId = doc.id)
+                }
+                trySend(list)
+            }
+        }
+
+        awaitClose {
+            registration.remove()
         }
     }
 
@@ -365,24 +399,29 @@ class DoctorRepository {
         onSuccess: (List<QueueItem>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getDoctorQueue(date)
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess(response.body() ?: emptyList())
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to fetch doctor queue")
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to fetch doctor queue")
-                }
-            }
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        if (currentUid.isEmpty()) {
+            onFailure("User not logged in")
+            return
         }
+
+        var query = firestore.collection("queue")
+            .whereEqualTo("doctorId", currentUid)
+
+        if (date != null) {
+            query = query.whereEqualTo("date", date)
+        }
+
+        query.get()
+            .addOnSuccessListener { querySnapshot ->
+                val list = querySnapshot.documents.mapNotNull { doc ->
+                    doc.toObject(QueueItem::class.java)?.copy(queueId = doc.id)
+                }
+                onSuccess(list)
+            }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to fetch doctor queue")
+            }
     }
 
     /**
@@ -395,24 +434,18 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.updateQueueStatus(queueId, UpdateQueueStatusRequest(newStatus))
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess()
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to update queue status")
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to update queue status")
-                }
+        firestore.collection("queue").document(queueId)
+            .update("status", newStatus)
+            .addOnSuccessListener {
+                val isActive = !(newStatus == "COMPLETED" || newStatus == "CANCELLED")
+                firestore.collection("queue").document(queueId)
+                    .update("isActive", isActive)
+                    .addOnSuccessListener { onSuccess() }
+                    .addOnFailureListener { onSuccess() }
             }
-        }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to update queue status")
+            }
     }
 
     /**
@@ -422,28 +455,50 @@ class DoctorRepository {
         onSuccess: (List<User>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getDoctorPatients()
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess(response.body() ?: emptyList())
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to load doctor patients list")
-                    }
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        if (currentUid.isEmpty()) {
+            onFailure("User not logged in")
+            return
+        }
+
+        firestore.collection("appointments")
+            .whereEqualTo("doctorId", currentUid)
+            .get()
+            .addOnSuccessListener { querySnapshot ->
+                val patientIds = querySnapshot.documents.mapNotNull { it.getString("patientId") }.distinct()
+                if (patientIds.isEmpty()) {
+                    onSuccess(emptyList())
+                    return@addOnSuccessListener
                 }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to load doctor patients")
+
+                val userTasks = patientIds.chunked(10).map { chunk ->
+                    firestore.collection("users")
+                        .whereIn("uid", chunk)
+                        .get()
+                }
+
+                val users = mutableListOf<User>()
+                var completedCount = 0
+                
+                userTasks.forEach { task ->
+                    task.addOnSuccessListener { snapshot ->
+                        users.addAll(snapshot.documents.mapNotNull { it.toObject(User::class.java) })
+                        completedCount++
+                        if (completedCount == userTasks.size) {
+                            onSuccess(users)
+                        }
+                    }.addOnFailureListener { e ->
+                        onFailure(e.message ?: "Failed to fetch patient users")
+                    }
                 }
             }
-        }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to load doctor appointments")
+            }
     }
 
     /**
-     * Updates doctor availability and practice details in MongoDB.
+     * Updates doctor availability and practice details in Firestore.
      */
     fun updateDoctorPracticeDetails(
         consultationFee: Double,
@@ -458,34 +513,247 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val request = AvailabilityRequest(
-                    workingDays = workingDays,
-                    consultationStartTime = startTime,
-                    consultationEndTime = endTime,
-                    lunchStartTime = lunchStart,
-                    lunchEndTime = lunchEnd,
-                    breakStartTime = breakStart,
-                    breakEndTime = breakEnd,
-                    slotDuration = slotDuration,
-                    consultationFee = consultationFee
-                )
-                val response = apiService.updateAvailability(request)
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess()
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to update availability: ${response.message()}")
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to update availability")
-                }
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        if (currentUid.isEmpty()) {
+            onFailure("User not logged in")
+            return
+        }
+
+        val updates = hashMapOf(
+            "consultationFee" to consultationFee,
+            "workingDays" to workingDays,
+            "consultationStartTime" to startTime,
+            "consultationEndTime" to endTime,
+            "lunchStartTime" to lunchStart,
+            "lunchEndTime" to lunchEnd,
+            "breakStartTime" to breakStart,
+            "breakEndTime" to breakEnd,
+            "slotDuration" to slotDuration
+        )
+
+        firestore.collection("doctor_profiles").document(currentUid)
+            .set(updates, SetOptions.merge())
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to update availability")
             }
+    }
+
+    fun rescheduleAppointment(
+        appointmentId: String,
+        doctorId: String,
+        doctorName: String,
+        department: String,
+        date: String,
+        time: String,
+        onSuccess: (Appointment) -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        if (currentUid.isEmpty()) {
+            onFailure("User not logged in")
+            return
+        }
+
+        // Fetch patient details first
+        firestore.collection("users").document(currentUid).get()
+            .addOnSuccessListener { patientDoc ->
+                val patientName = patientDoc.getString("fullName") ?: "Patient"
+
+                // Fetch doctor profile to get consultationStartTime and slotDuration
+                firestore.collection("doctor_profiles").document(doctorId).get()
+                    .addOnSuccessListener { doctorDoc ->
+                        val startTimeStr = doctorDoc.getString("consultationStartTime") ?: "09:00"
+                        val slotDuration = doctorDoc.getLong("slotDuration")?.toInt() ?: 15
+
+                        // Query existing appointments for doctor on this date to count bookings for the hour
+                        firestore.collection("appointments")
+                            .whereEqualTo("doctorId", doctorId)
+                            .whereEqualTo("date", date)
+                            .get()
+                            .addOnSuccessListener { querySnapshot ->
+                                val dayBookings = querySnapshot.documents
+                                val existingBookings = dayBookings.count { it.getString("time") == time }
+
+                                val diffMinutes = timeToMinutes(time) - timeToMinutes(startTimeStr)
+                                val baseToken = (diffMinutes / slotDuration).coerceAtLeast(1)
+                                val tokenNumber = (baseToken + existingBookings).toString()
+
+                                val appointmentRef = firestore.collection("appointments").document(appointmentId)
+                                
+                                val updatedAppointment = Appointment(
+                                    appointmentId = appointmentId,
+                                    patientId = currentUid,
+                                    patientName = patientName,
+                                    doctorId = doctorId,
+                                    doctorName = doctorName,
+                                    department = department,
+                                    date = date,
+                                    time = time,
+                                    status = "UPCOMING",
+                                    tokenNumber = tokenNumber,
+                                    createdAt = Timestamp.now()
+                                )
+
+                                appointmentRef.set(updatedAppointment, SetOptions.merge())
+                                    .addOnSuccessListener {
+                                        // Find existing queue item for this appointment
+                                        firestore.collection("queue")
+                                            .whereEqualTo("appointmentId", appointmentId)
+                                            .get()
+                                            .addOnSuccessListener { queueSnapshot ->
+                                                val queueDocs = queueSnapshot.documents
+                                                if (queueDocs.isNotEmpty()) {
+                                                    val queueItemDoc = queueDocs[0]
+                                                    firestore.collection("queue").document(queueItemDoc.id)
+                                                        .update(
+                                                            mapOf(
+                                                                "date" to date,
+                                                                "tokenNumber" to tokenNumber,
+                                                                "status" to "WAITING",
+                                                                "isActive" to true
+                                                            )
+                                                        )
+                                                        .addOnSuccessListener {
+                                                            createRescheduleNotifications(currentUid, patientName, doctorId, doctorName, department, date, time, onSuccess, onFailure, updatedAppointment)
+                                                        }
+                                                        .addOnFailureListener { e ->
+                                                            onFailure(e.message ?: "Failed to update queue item")
+                                                        }
+                                                } else {
+                                                    // Create new queue item
+                                                    val queueRef = firestore.collection("queue").document()
+                                                    val queueItem = QueueItem(
+                                                        queueId = queueRef.id,
+                                                        appointmentId = appointmentId,
+                                                        patientId = currentUid,
+                                                        patientName = patientName,
+                                                        doctorId = doctorId,
+                                                        tokenNumber = tokenNumber,
+                                                        status = "WAITING",
+                                                        isActive = true,
+                                                        date = date
+                                                    )
+                                                    queueRef.set(queueItem)
+                                                        .addOnSuccessListener {
+                                                            createRescheduleNotifications(currentUid, patientName, doctorId, doctorName, department, date, time, onSuccess, onFailure, updatedAppointment)
+                                                        }
+                                                        .addOnFailureListener { e ->
+                                                            onFailure(e.message ?: "Failed to initialize queue item")
+                                                        }
+                                                }
+                                            }
+                                            .addOnFailureListener { e ->
+                                                onFailure(e.message ?: "Failed to query existing queue item")
+                                            }
+                                    }
+                                    .addOnFailureListener { e ->
+                                        onFailure(e.message ?: "Failed to reschedule appointment")
+                                    }
+                            }
+                            .addOnFailureListener { e ->
+                                onFailure(e.message ?: "Failed to count appointments")
+                            }
+                    }
+                    .addOnFailureListener { e ->
+                        onFailure(e.message ?: "Failed to fetch doctor profile details")
+                    }
+            }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to fetch patient information")
+            }
+    }
+
+    private fun createRescheduleNotifications(
+        currentUid: String,
+        patientName: String,
+        doctorId: String,
+        doctorName: String,
+        department: String,
+        date: String,
+        time: String,
+        onSuccess: (Appointment) -> Unit,
+        onFailure: (String) -> Unit,
+        appointment: Appointment
+    ) {
+        // 1. Create a notification for the patient
+        val notificationRef = firestore.collection("notifications").document()
+        val notificationData = hashMapOf(
+            "userId" to currentUid,
+            "title" to "Appointment Rescheduled",
+            "message" to "Your appointment with $doctorName ($department) has been rescheduled to $date at $time.",
+            "type" to "APPOINTMENT",
+            "read" to false,
+            "isRead" to false,
+            "timestamp" to com.google.firebase.Timestamp.now()
+        )
+        notificationRef.set(notificationData)
+
+        // 2. Create a notification for the doctor
+        val doctorNotificationRef = firestore.collection("notifications").document()
+        val doctorNotificationData = hashMapOf(
+            "userId" to doctorId,
+            "title" to "Appointment Rescheduled by Patient",
+            "message" to "Appointment has been rescheduled by $patientName to $date at $time.",
+            "type" to "APPOINTMENT",
+            "read" to false,
+            "isRead" to false,
+            "timestamp" to com.google.firebase.Timestamp.now()
+        )
+        doctorNotificationRef.set(doctorNotificationData)
+
+        // 3. Create an activity log for the patient
+        val activityRef = firestore.collection("activities").document()
+        val timestampStr = java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.US).format(java.util.Date())
+        val activityData = hashMapOf(
+            "userId" to currentUid,
+            "type" to "APPOINTMENT",
+            "title" to "Rescheduled Appointment",
+            "description" to "Rescheduled with $doctorName to $date at $time.",
+            "timestamp" to timestampStr
+        )
+        activityRef.set(activityData)
+            .addOnSuccessListener {
+                onSuccess(appointment)
+            }
+            .addOnFailureListener {
+                onSuccess(appointment)
+            }
+    }
+
+    private fun timeToMinutes(timeStr: String?): Int {
+        if (timeStr.isNullOrEmpty()) return 0
+        val cleanTime = timeStr.trim()
+        val locales = listOf(java.util.Locale.US, java.util.Locale.ENGLISH, java.util.Locale.getDefault())
+        val formats = listOf("hh:mm a", "h:mm a", "HH:mm", "H:mm")
+        
+        for (locale in locales) {
+            for (formatStr in formats) {
+                try {
+                    val sdf = java.text.SimpleDateFormat(formatStr, locale)
+                    val date = sdf.parse(cleanTime)
+                    if (date != null) {
+                        val cal = java.util.Calendar.getInstance()
+                        cal.time = date
+                        return cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE)
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        
+        return try {
+            val timeParts = cleanTime.split(" ")
+            val hm = timeParts[0].split(":")
+            var hour = hm[0].toInt()
+            val minute = hm[1].toInt()
+            if (timeParts.size > 1) {
+                val ampm = timeParts[1].uppercase(java.util.Locale.ROOT)
+                if (ampm.contains("PM") && hour < 12) hour += 12
+                if (ampm.contains("AM") && hour == 12) hour = 0
+            }
+            hour * 60 + minute
+        } catch (e: Exception) {
+            0
         }
     }
 }

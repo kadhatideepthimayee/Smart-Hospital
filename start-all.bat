@@ -16,21 +16,14 @@ echo Keep the launched terminal windows open to keep the servers active.
 echo.
 pause
 
-echo Starting Backend API Server...
-start "MedPlus Backend Server" cmd /k "cd /d backend && node server.js"
-
 echo Starting Vite Web Client...
 start "MedPlus Web Client" cmd /k "cd /d MedPlus-Web && npm run dev"
 
-echo Starting Android ADB Port Forwarding Watcher...
-start "MedPlus ADB Watcher" cmd /k "run-adb-reverse-watcher.bat"
-
 echo.
 echo ===================================================
-echo All services started in separate terminal windows!
+echo Vite Web Client started in a separate window!
 echo Web Portal: http://127.0.0.1:5173/
-echo Backend API: http://127.0.0.1:5000/
-echo You can now close this control panel window.
+echo You can now close this window.
 echo ===================================================
 echo.
 pause

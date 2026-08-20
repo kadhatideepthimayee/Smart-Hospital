@@ -2,20 +2,15 @@ package com.example.medplus.repository
 
 import com.example.medplus.model.AdminNotification
 import com.example.medplus.model.DoctorProfile
-import com.example.medplus.data.network.RetrofitClient
-import com.example.medplus.data.network.VerifyDoctorRequest
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.Timestamp
 
 /**
- * Repository to handle admin-related data operations in MongoDB.
+ * Repository to handle admin-related data operations in Firestore.
  */
 class AdminRepository {
 
-    private val context = com.google.firebase.FirebaseApp.getInstance().applicationContext
-    private val apiService = RetrofitClient.getApiService(context)
+    private val firestore: FirebaseFirestore get() = FirebaseFirestore.getInstance()
 
     /**
      * Fetches admin notifications.
@@ -24,24 +19,17 @@ class AdminRepository {
         onSuccess: (List<AdminNotification>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getAdminNotifications()
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess(response.body() ?: emptyList())
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to fetch notifications")
-                    }
+        firestore.collection("admin_notifications")
+            .get()
+            .addOnSuccessListener { querySnapshot ->
+                val list = querySnapshot.documents.mapNotNull { doc ->
+                    doc.toObject(AdminNotification::class.java)?.copy(id = doc.id)
                 }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to fetch notifications")
-                }
+                onSuccess(list)
             }
-        }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to fetch notifications")
+            }
     }
 
     /**
@@ -52,37 +40,23 @@ class AdminRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.deleteAdminNotification(id)
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess()
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to delete notification")
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to delete notification")
-                }
+        firestore.collection("admin_notifications").document(id)
+            .delete()
+            .addOnSuccessListener { onSuccess() }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to delete notification")
             }
-        }
     }
 
     /**
      * Marks a notification as read.
      */
     fun markNotificationAsRead(id: String) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                apiService.markAdminNotificationRead(id)
-            } catch (e: Exception) {
+        firestore.collection("admin_notifications").document(id)
+            .update("isRead", true)
+            .addOnFailureListener { e ->
                 android.util.Log.e("AdminRepository", "Failed to mark notification read", e)
             }
-        }
     }
 
     /**
@@ -91,24 +65,15 @@ class AdminRepository {
     fun getUnreadNotificationCount(
         onSuccess: (Int) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getAdminUnreadCount()
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess(response.body()?.count ?: 0)
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onSuccess(0)
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onSuccess(0)
-                }
+        firestore.collection("admin_notifications")
+            .whereEqualTo("isRead", false)
+            .get()
+            .addOnSuccessListener { querySnapshot ->
+                onSuccess(querySnapshot.size())
             }
-        }
+            .addOnFailureListener {
+                onSuccess(0)
+            }
     }
 
     /**
@@ -119,24 +84,18 @@ class AdminRepository {
         onSuccess: (List<DoctorProfile>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getDoctorsByStatus(status)
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess(response.body() ?: emptyList())
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to fetch doctors by status")
-                    }
+        firestore.collection("doctor_profiles")
+            .whereEqualTo("verificationStatus", status)
+            .get()
+            .addOnSuccessListener { querySnapshot ->
+                val list = querySnapshot.documents.mapNotNull { doc ->
+                    doc.toObject(DoctorProfile::class.java)
                 }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to fetch doctors")
-                }
+                onSuccess(list)
             }
-        }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to fetch doctors")
+            }
     }
 
     /**
@@ -146,24 +105,17 @@ class AdminRepository {
         onSuccess: (List<DoctorProfile>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val response = apiService.getAllDoctorProfiles()
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess(response.body() ?: emptyList())
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to fetch all doctor profiles")
-                    }
+        firestore.collection("doctor_profiles")
+            .get()
+            .addOnSuccessListener { querySnapshot ->
+                val list = querySnapshot.documents.mapNotNull { doc ->
+                    doc.toObject(DoctorProfile::class.java)
                 }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to fetch doctors")
-                }
+                onSuccess(list)
             }
-        }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to fetch doctors")
+            }
     }
 
     /**
@@ -177,28 +129,41 @@ class AdminRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val request = VerifyDoctorRequest(
-                    doctorId = uid,
-                    newStatus = newStatus,
-                    rejectionReason = rejectionReason
-                )
-                val response = apiService.verifyDoctor(request)
-                if (response.isSuccessful) {
-                    withContext(Dispatchers.Main) {
-                        onSuccess()
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onFailure("Failed to update verification status")
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to update status")
-                }
-            }
+        val updates = hashMapOf(
+            "verificationStatus" to newStatus,
+            "reviewedAt" to Timestamp.now(),
+            "reviewedBy" to adminUid
+        )
+        if (rejectionReason != null) {
+            updates["rejectionReason"] = rejectionReason
         }
+
+        firestore.collection("doctor_profiles").document(uid)
+            .update(updates as Map<String, Any>)
+            .addOnSuccessListener {
+                val title = "Verification Status Updated"
+                val message = if (newStatus == "VERIFIED" || newStatus == "APPROVED") {
+                    "Congratulations! Your professional profile has been verified by the administrator."
+                } else {
+                    "Your professional profile was rejected. Reason: ${rejectionReason ?: "Invalid credentials"}."
+                }
+
+                val notificationMap = hashMapOf(
+                    "userId" to uid,
+                    "title" to title,
+                    "message" to message,
+                    "type" to "VERIFICATION",
+                    "isRead" to false,
+                    "timestamp" to Timestamp.now()
+                )
+
+                firestore.collection("notifications")
+                    .add(notificationMap)
+                    .addOnSuccessListener { onSuccess() }
+                    .addOnFailureListener { onSuccess() }
+            }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to update status")
+            }
     }
 }

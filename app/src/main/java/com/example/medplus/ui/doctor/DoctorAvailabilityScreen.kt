@@ -79,17 +79,30 @@ fun DoctorAvailabilityScreen(
 
     fun showTimePicker(initialTime: String, onTimeSelected: (String) -> Unit) {
         val calendar = Calendar.getInstance()
-        // Simple parsing for initial time (HH:mm AM/PM)
         try {
-            val parts = initialTime.split(" ", ":")
-            var hour = parts[0].toInt()
-            val minute = parts[1].toInt()
-            val amPm = parts[2]
-            if (amPm == "PM" && hour < 12) hour += 12
-            if (amPm == "AM" && hour == 12) hour = 0
-            calendar.set(Calendar.HOUR_OF_DAY, hour)
-            calendar.set(Calendar.MINUTE, minute)
-        } catch (e: Exception) {}
+            val format = java.text.SimpleDateFormat("hh:mm a", Locale.US)
+            val date = format.parse(initialTime)
+            if (date != null) {
+                calendar.time = date
+            }
+        } catch (e: Exception) {
+            try {
+                val parts = initialTime.split(" ", ":")
+                var hour = parts[0].toInt()
+                val minute = parts[1].toInt()
+                calendar.set(Calendar.HOUR_OF_DAY, hour)
+                calendar.set(Calendar.MINUTE, minute)
+                if (parts.size > 2) {
+                    val amPm = parts[2].uppercase(Locale.US)
+                    if (amPm.contains("PM") && hour < 12) {
+                        calendar.set(Calendar.HOUR_OF_DAY, hour + 12)
+                    }
+                    if (amPm.contains("AM") && hour == 12) {
+                        calendar.set(Calendar.HOUR_OF_DAY, 0)
+                    }
+                }
+            } catch (ex: Exception) {}
+        }
 
         TimePickerDialog(
             context,
@@ -97,7 +110,7 @@ fun DoctorAvailabilityScreen(
                 val cal = Calendar.getInstance()
                 cal.set(Calendar.HOUR_OF_DAY, hour)
                 cal.set(Calendar.MINUTE, minute)
-                val format = java.text.SimpleDateFormat("hh:mm a", Locale.getDefault())
+                val format = java.text.SimpleDateFormat("hh:mm a", Locale.US)
                 onTimeSelected(format.format(cal.time))
             },
             calendar.get(Calendar.HOUR_OF_DAY),

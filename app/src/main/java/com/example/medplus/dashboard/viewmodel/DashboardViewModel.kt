@@ -20,12 +20,14 @@ class DashboardViewModel : ViewModel() {
         loadDashboardData()
     }
 
+    private var dashboardJob: kotlinx.coroutines.Job? = null
+
     fun loadDashboardData() {
-        _uiState.update { it.copy(isLoading = true) }
+        dashboardJob?.cancel()
         val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
         android.util.Log.d("PATIENT_APPOINTMENTS_DEBUG", "Loading dashboard data for patient UID: $uid")
 
-        viewModelScope.launch {
+        dashboardJob = viewModelScope.launch {
             // 1. Load User Profile
             repository.getCurrentUser(
                 onSuccess = { user ->

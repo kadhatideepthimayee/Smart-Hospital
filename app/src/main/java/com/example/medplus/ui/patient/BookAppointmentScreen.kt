@@ -108,6 +108,14 @@ private fun BookingFormContent(
     var selectedDate by remember { mutableStateOf<DateItem?>(uiState.selectedDate) }
     var selectedTime by remember { mutableStateOf(uiState.selectedTime) }
 
+    // Sync local state variables when the ViewModel's state is updated (for Rescheduling pre-fills)
+    LaunchedEffect(uiState.selectedDoctor, uiState.selectedDepartment) {
+        if (uiState.selectedDoctor != null) {
+            selectedDoctor = uiState.selectedDoctor
+            selectedDepartment = uiState.selectedDepartment
+        }
+    }
+
     val departments = HospitalDepartments.departments
 
     // Initial load of all verified doctors
@@ -122,8 +130,8 @@ private fun BookingFormContent(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Book Appointment", style = MaterialTheme.typography.titleLarge, color = PrimaryText)
-                        Text("Find a doctor and schedule your visit", style = MaterialTheme.typography.bodySmall, color = SecondaryText)
+                        Text(if (uiState.rescheduleId != null) "Reschedule Appointment" else "Book Appointment", style = MaterialTheme.typography.titleLarge, color = PrimaryText)
+                        Text(if (uiState.rescheduleId != null) "Select a new date and time for your visit" else "Find a doctor and schedule your visit", style = MaterialTheme.typography.bodySmall, color = SecondaryText)
                     }
                 },
                 navigationIcon = {
@@ -392,12 +400,13 @@ private fun SuccessContent(
 
         Spacer(Modifier.height(16.dp))
 
-        Text("Appointment Confirmed", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = PrimaryText, textAlign = TextAlign.Center)
+        val isRescheduling = uiState.rescheduleId != null
+        Text(if (isRescheduling) "Appointment Rescheduled" else "Appointment Confirmed", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = PrimaryText, textAlign = TextAlign.Center)
         
         Spacer(Modifier.height(8.dp))
         
         Text(
-            "Your appointment with Dr. ${doctor?.fullName} has been successfully scheduled.",
+            if (isRescheduling) "Your appointment with Dr. ${doctor?.fullName} has been successfully rescheduled." else "Your appointment with Dr. ${doctor?.fullName} has been successfully scheduled.",
             style = MaterialTheme.typography.bodyMedium,
             color = SecondaryText,
             textAlign = TextAlign.Center

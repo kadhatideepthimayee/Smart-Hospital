@@ -125,7 +125,7 @@ class DoctorAvailabilityViewModel : ViewModel() {
 
     private fun isTimeAfter(startTime: String, endTime: String): Boolean {
         try {
-            val format = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault())
+            val format = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.US)
             val start = format.parse(startTime)
             val end = format.parse(endTime)
             return end?.after(start) ?: false

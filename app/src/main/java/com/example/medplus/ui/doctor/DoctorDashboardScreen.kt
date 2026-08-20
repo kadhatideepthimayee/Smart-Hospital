@@ -70,6 +70,10 @@ fun DoctorDashboardScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var showCompleteDialog by remember { mutableStateOf<com.example.medplus.model.QueueItem?>(null) }
+    var diagnosis by remember { mutableStateOf("") }
+    var prescription by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
+    var followUpDate by remember { mutableStateOf("") }
 
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -98,15 +102,71 @@ fun DoctorDashboardScreen(
     }
 
     if (showCompleteDialog != null) {
+        val patientName = showCompleteDialog?.patientName ?: "Patient"
         AlertDialog(
-            onDismissRequest = { showCompleteDialog = null },
-            title = { Text("Complete Consultation?", fontWeight = FontWeight.Bold) },
-            text = { Text("Are you sure you want to mark this consultation with ${showCompleteDialog?.patientName} as completed?") },
+            onDismissRequest = {
+                showCompleteDialog = null
+                diagnosis = ""
+                prescription = ""
+                notes = ""
+                followUpDate = ""
+            },
+            title = { Text("Complete Consultation", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Patient: $patientName")
+                    OutlinedTextField(
+                        value = diagnosis,
+                        onValueChange = { diagnosis = it },
+                        label = { Text("Diagnosis (Required)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = prescription,
+                        onValueChange = { prescription = it },
+                        label = { Text("Prescription/Medicines (Required)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = notes,
+                        onValueChange = { notes = it },
+                        label = { Text("Doctor Notes (Optional)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = followUpDate,
+                        onValueChange = { followUpDate = it },
+                        label = { Text("Follow-up Date (Optional)") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.completeConsultation(showCompleteDialog!!)
+                        if (diagnosis.isBlank()) {
+                            android.widget.Toast.makeText(context, "Diagnosis is required", android.widget.Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        if (prescription.isBlank()) {
+                            android.widget.Toast.makeText(context, "Prescription is required", android.widget.Toast.LENGTH_SHORT).show()
+                            return@Button
+                        }
+                        viewModel.completeConsultation(
+                            queueItem = showCompleteDialog!!,
+                            diagnosis = diagnosis,
+                            prescription = prescription,
+                            notes = notes,
+                            followUpDate = followUpDate
+                        )
                         showCompleteDialog = null
+                        diagnosis = ""
+                        prescription = ""
+                        notes = ""
+                        followUpDate = ""
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = DC.Success)
                 ) {
@@ -114,7 +174,13 @@ fun DoctorDashboardScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCompleteDialog = null }) {
+                TextButton(onClick = {
+                    showCompleteDialog = null
+                    diagnosis = ""
+                    prescription = ""
+                    notes = ""
+                    followUpDate = ""
+                }) {
                     Text("Cancel")
                 }
             },

@@ -52,6 +52,7 @@ class DoctorDashboardViewModel : ViewModel() {
     init {
         loadDashboardData()
         observeQueue()
+        observeAppointments()
     }
 
     private fun observeQueue() {
@@ -86,6 +87,35 @@ class DoctorDashboardViewModel : ViewModel() {
         }
     }
 
+    private fun observeAppointments() {
+        viewModelScope.launch {
+            appointmentRepository.getDoctorAppointmentsFlow().collectLatest { appointments ->
+                android.util.Log.d("DOCTOR_APPOINTMENT_DEBUG", "Realtime appointments count: ${appointments.size}")
+                val todayStr = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.ENGLISH))
+                
+                val todayAppointments = appointments.filter { it.date == todayStr }.sortedBy { it.timestamp?.seconds ?: 0L }
+                val todayCount = todayAppointments.size
+                val pendingCount = appointments.count { it.status.trim().uppercase() == "UPCOMING" }
+                val completedCount = appointments.count { it.status.trim().uppercase() == "COMPLETED" }
+                
+                // Find Next Appointment (nearest future appointment)
+                val nextAppointment = appointments
+                    .filter { it.status.trim().uppercase() == "UPCOMING" }
+                    .sortedBy { it.timestamp?.seconds ?: 0L }
+                    .firstOrNull()
+
+                _uiState.update { it.copy(
+                    todayAppointments = todayAppointments,
+                    todayCount = todayCount,
+                    pendingCount = pendingCount,
+                    completedCount = completedCount,
+                    nextAppointment = nextAppointment,
+                    isAppointmentError = false
+                ) }
+            }
+        }
+    }
+
     fun loadDashboardData() {
         val uid = auth.currentUser?.uid ?: return
         
@@ -108,38 +138,7 @@ class DoctorDashboardViewModel : ViewModel() {
                 }
             )
 
-            // Fetch All Appointments for this doctor to calculate stats and next appt
-            appointmentRepository.getDoctorAppointments(
-                onSuccess = { appointments ->
-                    android.util.Log.d("DOCTOR_APPOINTMENT_DEBUG", "Appointments found: ${appointments.size}")
-                    
-                    val todayStr = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.ENGLISH))
-                    
-                    val todayAppointments = appointments.filter { it.date == todayStr }.sortedBy { it.timestamp?.seconds ?: 0L }
-                    val todayCount = todayAppointments.size
-                    val pendingCount = appointments.count { it.status.trim().uppercase() == "UPCOMING" }
-                    val completedCount = appointments.count { it.status.trim().uppercase() == "COMPLETED" }
-                    
-                    // Find Next Appointment (nearest future appointment)
-                    val nextAppointment = appointments
-                        .filter { it.status.trim().uppercase() == "UPCOMING" }
-                        .sortedBy { it.timestamp?.seconds ?: 0L }
-                        .firstOrNull()
-
-                    _uiState.update { it.copy(
-                        todayAppointments = todayAppointments,
-                        todayCount = todayCount,
-                        pendingCount = pendingCount,
-                        completedCount = completedCount,
-                        nextAppointment = nextAppointment,
-                        isAppointmentError = false
-                    ) }
-                },
-                onFailure = { error ->
-                    android.util.Log.e("DOCTOR_APPOINTMENT_DEBUG", "Failed to load appointments: $error")
-                    _uiState.update { it.copy(errorMessage = "Unable to load appointments", isAppointmentError = true) }
-                }
-            )
+            // Fetch All Appointments now tracked dynamically via observeAppointments Flow
 
             // Fetch Notification Count
             dashboardRepository.getUnreadNotificationCount(
@@ -166,8 +165,58 @@ class DoctorDashboardViewModel : ViewModel() {
         val appointmentId = queueItem.appointmentId
         android.util.Log.d("DOCTOR_CONSULTATION_DEBUG", "Starting consultation: appointmentId=$appointmentId")
         _uiState.update { it.copy(actionLoading = true) }
-        
-        repository.updateQueueStatus(queueItem.queueId, doctorId, "IN_PROGRESS",
+
+        val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+        if (queueItem.queueId.isEmpty()) {
+            firestore.collection("queue")
+                .whereEqualTo("appointmentId", appointmentId)
+                .get()
+                .addOnSuccessListener { querySnapshot ->
+                    val docs = querySnapshot.documents
+                    if (docs.isNotEmpty()) {
+                        val realQueueId = docs[0].id
+                        performStartConsultation(realQueueId, doctorId, appointmentId)
+                    } else {
+                        // Create a new queue item if it doesn't exist
+                        val queueRef = firestore.collection("queue").document()
+                        val newQueueItem = QueueItem(
+                            queueId = queueRef.id,
+                            appointmentId = appointmentId,
+                            doctorId = doctorId,
+                            patientId = queueItem.patientId.ifEmpty { _uiState.value.todayAppointments.find { it.appointmentId == appointmentId }?.patientId ?: "" },
+                            patientName = queueItem.patientName,
+                            tokenNumber = queueItem.tokenNumber,
+                            status = "IN_PROGRESS",
+                            isActive = true,
+                            date = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.ENGLISH))
+                        )
+                        queueRef.set(newQueueItem)
+                            .addOnSuccessListener {
+                                appointmentRepository.updateAppointmentStatus(appointmentId, doctorId, "IN_PROGRESS",
+                                    onSuccess = {
+                                        _uiState.update { it.copy(actionLoading = false) }
+                                        loadDashboardData()
+                                    },
+                                    onFailure = { error ->
+                                        _uiState.update { it.copy(actionLoading = false, errorMessage = error) }
+                                    }
+                                )
+                            }
+                            .addOnFailureListener { e ->
+                                _uiState.update { it.copy(actionLoading = false, errorMessage = e.message ?: "Failed to initialize queue") }
+                            }
+                    }
+                }
+                .addOnFailureListener { e ->
+                    _uiState.update { it.copy(actionLoading = false, errorMessage = e.message ?: "Failed to resolve queue item") }
+                }
+        } else {
+            performStartConsultation(queueItem.queueId, doctorId, appointmentId)
+        }
+    }
+
+    private fun performStartConsultation(queueId: String, doctorId: String, appointmentId: String) {
+        repository.updateQueueStatus(queueId, doctorId, "IN_PROGRESS",
             onSuccess = {
                 appointmentRepository.updateAppointmentStatus(appointmentId, doctorId, "IN_PROGRESS",
                     onSuccess = {
@@ -188,18 +237,68 @@ class DoctorDashboardViewModel : ViewModel() {
         )
     }
 
-    fun completeConsultation(queueItem: QueueItem) {
+    fun completeConsultation(
+        queueItem: QueueItem,
+        diagnosis: String,
+        prescription: String,
+        notes: String,
+        followUpDate: String
+    ) {
         val doctorId = auth.currentUser?.uid ?: return
         val appointmentId = queueItem.appointmentId
         android.util.Log.d("DOCTOR_CONSULTATION_DEBUG", "Completing consultation: appointmentId=$appointmentId")
         _uiState.update { it.copy(actionLoading = true) }
 
-        repository.updateQueueStatus(queueItem.queueId, doctorId, "COMPLETED",
+        val medicalRecordRepository = com.example.medplus.repository.MedicalRecordRepository()
+        medicalRecordRepository.createMedicalRecord(
+            appointmentId = appointmentId,
+            patientId = queueItem.patientId.ifEmpty { _uiState.value.todayAppointments.find { it.appointmentId == appointmentId }?.patientId ?: "" },
+            diagnosis = diagnosis,
+            prescription = prescription,
+            notes = notes,
+            followUpDate = followUpDate,
+            onSuccess = {
+                val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                if (queueItem.queueId.isEmpty()) {
+                    firestore.collection("queue")
+                        .whereEqualTo("appointmentId", appointmentId)
+                        .get()
+                        .addOnSuccessListener { querySnapshot ->
+                            val docs = querySnapshot.documents
+                            if (docs.isNotEmpty()) {
+                                performCompleteConsultation(docs[0].id, doctorId, appointmentId)
+                            } else {
+                                appointmentRepository.updateAppointmentStatus(appointmentId, doctorId, "COMPLETED",
+                                    onSuccess = {
+                                        _uiState.update { it.copy(actionLoading = false, successMessage = "Consultation completed and medical record saved.") }
+                                        loadDashboardData()
+                                    },
+                                    onFailure = { error ->
+                                        _uiState.update { it.copy(actionLoading = false, errorMessage = error) }
+                                    }
+                                )
+                            }
+                        }
+                        .addOnFailureListener { e ->
+                            _uiState.update { it.copy(actionLoading = false, errorMessage = e.message ?: "Failed to resolve queue item") }
+                        }
+                } else {
+                    performCompleteConsultation(queueItem.queueId, doctorId, appointmentId)
+                }
+            },
+            onFailure = { error ->
+                _uiState.update { it.copy(actionLoading = false, errorMessage = "Failed to save medical record: $error") }
+            }
+        )
+    }
+
+    private fun performCompleteConsultation(queueId: String, doctorId: String, appointmentId: String) {
+        repository.updateQueueStatus(queueId, doctorId, "COMPLETED",
             onSuccess = {
                 appointmentRepository.updateAppointmentStatus(appointmentId, doctorId, "COMPLETED",
                     onSuccess = {
                         android.util.Log.d("DOCTOR_CONSULTATION_DEBUG", "Consultation updated successfully")
-                        _uiState.update { it.copy(actionLoading = false, successMessage = "Consultation completed successfully.") }
+                        _uiState.update { it.copy(actionLoading = false, successMessage = "Consultation completed and medical record saved.") }
                         loadDashboardData()
                     },
                     onFailure = { error ->

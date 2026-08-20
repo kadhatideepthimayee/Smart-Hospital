@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getPatientAppointments, cancelAppointment } from '../../api/appointments';
 import { submitFeedback, getFeedbackForAppointment } from '../../api/feedback';
@@ -8,6 +9,7 @@ import { Appointment, DoctorFeedback } from '../../types';
 
 const MyAppointments: React.FC = () => {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'UPCOMING' | 'COMPLETED' | 'CANCELLED'>('UPCOMING');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -186,14 +188,24 @@ const MyAppointments: React.FC = () => {
                 </Button>
 
                 {appt.status === 'UPCOMING' && (
-                  <Button 
-                    onClick={() => handleCancelClick(appt._id)} 
-                    variant="danger" 
-                    className="py-2.5 text-xs w-full rounded-xl font-bold flex items-center justify-center gap-1.5"
-                  >
-                    <Trash2 size={14} />
-                    <span>Cancel Appointment</span>
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button 
+                      onClick={() => navigate(`/patient/book?rescheduleId=${appt._id}`)} 
+                      variant="outline" 
+                      className="py-2.5 text-xs flex-1 rounded-xl font-bold flex items-center justify-center gap-1.5"
+                    >
+                      <Calendar size={14} />
+                      <span>Reschedule</span>
+                    </Button>
+                    <Button 
+                      onClick={() => handleCancelClick(appt._id)} 
+                      variant="danger" 
+                      className="py-2.5 text-xs flex-1 rounded-xl font-bold flex items-center justify-center gap-1.5"
+                    >
+                      <Trash2 size={14} />
+                      <span>Cancel</span>
+                    </Button>
+                  </div>
                 )}
 
                 {appt.status === 'COMPLETED' && (

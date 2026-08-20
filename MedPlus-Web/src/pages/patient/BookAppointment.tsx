@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getVerifiedDoctors } from '../../api/doctors';
-import { getAppointmentsByDoctorId, bookAppointment } from '../../api/appointments';
+import { getAppointmentsByDoctorId, bookAppointment, getAppointmentDetails, rescheduleAppointment } from '../../api/appointments';
 import { Card, Button, Skeleton, StatusBadge } from '../../components/UI';
 import { formatDateToBackend, getWeekdayName, timeToMinutes, minutesToTimeStr } from '../../lib/utils';
 import { 
@@ -43,6 +43,9 @@ const BookAppointment: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  const [searchParams] = useSearchParams();
+  const rescheduleId = searchParams.get('rescheduleId');
+
   // Step state: 1: dept, 2: doctor, 3: date/time & slot, 4: confirm, 5: success
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [selectedDept, setSelectedDept] = useState<string | null>(null);
@@ -58,6 +61,25 @@ const BookAppointment: React.FC = () => {
     queryFn: getVerifiedDoctors,
     enabled: step >= 1,
   });
+
+  // Fetch appointment to reschedule if rescheduleId is provided
+  const { data: rescheduleAppointmentDetails, isLoading: isRescheduleLoading } = useQuery({
+    queryKey: ['rescheduleAppointment', rescheduleId],
+    queryFn: () => rescheduleId ? getAppointmentDetails(rescheduleId) : null,
+    enabled: !!rescheduleId,
+  });
+
+  // Pre-fill state when reschedule details are loaded
+  useEffect(() => {
+    if (rescheduleAppointmentDetails && verifiedDoctors.length > 0) {
+      const docProfile = verifiedDoctors.find(d => d.uid === rescheduleAppointmentDetails.doctorId);
+      if (docProfile) {
+        setSelectedDept(rescheduleAppointmentDetails.department);
+        setSelectedDoctor(docProfile);
+        setStep(3); // Go straight to slot selection
+      }
+    }
+  }, [rescheduleAppointmentDetails, verifiedDoctors]);
 
   // Fetch doctor's existing appointments on selected date to calculate slot loads
   const { data: doctorAppointments = [], isLoading: isSlotsLoading } = useQuery({
@@ -79,6 +101,25 @@ const BookAppointment: React.FC = () => {
     onError: (err: any) => {
       setToast({
         message: err.response?.data?.msg || err.message || 'Failed to book appointment slot.',
+        type: 'error'
+      });
+      setTimeout(() => setToast(null), 4000);
+    }
+  });
+
+  // Reschedule mutation
+  const rescheduleMutation = useMutation({
+    mutationFn: rescheduleAppointment,
+    onSuccess: (data) => {
+      setReceipt(data);
+      queryClient.invalidateQueries({ queryKey: ['upcomingAppointment'] });
+      queryClient.invalidateQueries({ queryKey: ['liveQueueStatus'] });
+      queryClient.invalidateQueries({ queryKey: ['patientAppointments'] });
+      setStep(5);
+    },
+    onError: (err: any) => {
+      setToast({
+        message: err.response?.data?.msg || err.message || 'Failed to reschedule appointment slot.',
         type: 'error'
       });
       setTimeout(() => setToast(null), 4000);
@@ -160,14 +201,26 @@ const BookAppointment: React.FC = () => {
   const handleConfirmBooking = () => {
     if (!selectedDoctor || !selectedDate || !selectedTime) return;
     
-    bookMutation.mutate({
-      doctorId: selectedDoctor.uid,
-      doctorName: selectedDoctor.fullName,
-      department: selectedDoctor.specialization || selectedDoctor.department || 'General Medicine',
-      date: getBackendFormattedDate(),
-      time: selectedTime,
-      reason: 'Standard Consultation check'
-    });
+    if (rescheduleId) {
+      rescheduleMutation.mutate({
+        appointmentId: rescheduleId,
+        doctorId: selectedDoctor.uid,
+        doctorName: selectedDoctor.fullName,
+        department: selectedDoctor.specialization || selectedDoctor.department || 'General Medicine',
+        date: getBackendFormattedDate(),
+        time: selectedTime,
+        reason: 'Rescheduled via portal'
+      });
+    } else {
+      bookMutation.mutate({
+        doctorId: selectedDoctor.uid,
+        doctorName: selectedDoctor.fullName,
+        department: selectedDoctor.specialization || selectedDoctor.department || 'General Medicine',
+        date: getBackendFormattedDate(),
+        time: selectedTime,
+        reason: 'Standard Consultation check'
+      });
+    }
   };
 
   const todayStr = new Date().toISOString().split('T')[0];
@@ -197,9 +250,9 @@ const BookAppointment: React.FC = () => {
           <h3 className="text-base font-extrabold text-slate-900 tracking-tight leading-snug">
             {step === 1 && 'Select a Specialty Department'}
             {step === 2 && `Available Specialists (${selectedDept})`}
-            {step === 3 && 'Choose Date & Appointment Block'}
-            {step === 4 && 'Confirm Appointment Summary'}
-            {step === 5 && 'Booking Confirmed!'}
+            {step === 3 && (rescheduleId ? 'Reschedule Appointment Slot' : 'Choose Date & Appointment Block')}
+            {step === 4 && (rescheduleId ? 'Confirm Rescheduled Details' : 'Confirm Appointment Summary')}
+            {step === 5 && (rescheduleId ? 'Appointment Rescheduled!' : 'Booking Confirmed!')}
           </h3>
           {step < 5 && (
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
@@ -413,7 +466,7 @@ const BookAppointment: React.FC = () => {
               <Button 
                 onClick={handleConfirmBooking} 
                 className="flex-1 py-2.5 text-xs rounded-xl font-bold shadow-md" 
-                loading={bookMutation.isPending}
+                loading={bookMutation.isPending || rescheduleMutation.isPending}
               >
                 Confirm Booking
               </Button>
@@ -428,8 +481,14 @@ const BookAppointment: React.FC = () => {
           <div className="inline-flex p-4.5 bg-emerald-50 text-emerald-600 rounded-full mb-5 shadow-inner shadow-emerald-500/5 animate-bounce">
             <CheckCircle size={40} />
           </div>
-          <h2 className="text-xl font-black text-emerald-600 mb-1">Booking Confirmed!</h2>
-          <p className="text-xs text-slate-400 font-semibold mb-6">Your appointment is scheduled and synchronized with the doctor's queue.</p>
+          <h2 className="text-xl font-black text-emerald-600 mb-1">
+            {rescheduleId ? 'Appointment Rescheduled!' : 'Booking Confirmed!'}
+          </h2>
+          <p className="text-xs text-slate-400 font-semibold mb-6">
+            {rescheduleId 
+              ? 'Your appointment has been rescheduled and synchronized with the doctor\'s queue.'
+              : 'Your appointment is scheduled and synchronized with the doctor\'s queue.'}
+          </p>
 
           <Card className="mb-6 text-left bg-slate-50/70 border-dashed border-slate-200 p-5 rounded-3xl" hoverEffect={false}>
             <div className="space-y-3.5 text-xs text-slate-655 font-bold">

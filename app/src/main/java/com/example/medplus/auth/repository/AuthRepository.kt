@@ -1,19 +1,21 @@
 package com.example.medplus.auth.repository
 
-import com.example.medplus.auth.model.User
-import com.example.medplus.data.network.*
-import com.example.medplus.repository.UserRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import android.content.Context
+import android.util.Log
+import com.example.medplus.data.network.SessionManager
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.Timestamp
 
 class AuthRepository {
 
+    private val auth: FirebaseAuth get() = FirebaseAuth.getInstance()
+    private val firestore: FirebaseFirestore get() = FirebaseFirestore.getInstance()
+    
+    // We get application context dynamically to initialize SessionManager
     private val context = com.google.firebase.FirebaseApp.getInstance().applicationContext
-    private val apiService = RetrofitClient.getApiService(context)
     private val sessionManager = SessionManager.getInstance(context)
-    private val userRepository = UserRepository()
 
     /**
      * Register a new user
@@ -27,49 +29,45 @@ class AuthRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        android.util.Log.d("DOCTOR_REG_DEBUG", "Registration started for $email with role $role")
+        Log.d("AUTH_DEBUG", "Firebase Registration started for $email with role $role")
 
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val registerRequest = RegisterRequest(
-                    fullName = fullName,
-                    email = email,
-                    phone = phone,
-                    password = password,
-                    role = role
+        auth.createUserWithEmailAndPassword(email, password)
+            .addOnSuccessListener { authResult ->
+                val uid = authResult.user?.uid ?: ""
+                
+                val userMap = hashMapOf(
+                    "uid" to uid,
+                    "fullName" to fullName,
+                    "email" to email,
+                    "phone" to phone,
+                    "role" to role,
+                    "createdAt" to Timestamp.now()
                 )
-                val response = apiService.register(registerRequest)
-                if (response.isSuccessful) {
-                    val loginResponse = response.body()
-                    if (loginResponse != null) {
+
+                firestore.collection("users").document(uid).set(userMap)
+                    .addOnSuccessListener {
+                        // Store local session details for compat with existing Compose UI
                         sessionManager.saveSession(
-                            token = loginResponse.token ?: "",
-                            uid = loginResponse.user?.uid ?: "",
-                            email = loginResponse.user?.email ?: "",
-                            role = loginResponse.user?.role ?: "",
-                            name = loginResponse.user?.fullName ?: "",
-                            phone = loginResponse.user?.phone ?: "",
-                            profileImage = loginResponse.user?.profileImage ?: ""
+                            token = "firebase_session_token",
+                            uid = uid,
+                            email = email,
+                            role = role,
+                            name = fullName,
+                            phone = phone,
+                            profileImage = ""
                         )
-                    }
-                    android.util.Log.d("DOCTOR_REG_DEBUG", "Registration successful in MongoDB (Session stored)")
-                    withContext(Dispatchers.Main) {
+                        Log.d("AUTH_DEBUG", "Firebase Registration successful (Session stored)")
                         onSuccess()
                     }
-                } else {
-                    val errorMsg = response.errorBody()?.string() ?: "Registration failed"
-                    android.util.Log.e("DOCTOR_REG_DEBUG", "Registration failed: $errorMsg")
-                    withContext(Dispatchers.Main) {
-                        onFailure(errorMsg)
+                    .addOnFailureListener { e ->
+                        Log.e("AUTH_DEBUG", "Firestore profile creation failed", e)
+                        onFailure(e.message ?: "Failed to save user profile in Firestore")
                     }
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("DOCTOR_REG_DEBUG", "Network error during registration", e)
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Registration Failed. Check your network.")
-                }
             }
-        }
+            .addOnFailureListener { e ->
+                Log.e("AUTH_DEBUG", "Firebase Auth registration failed", e)
+                onFailure(e.message ?: "Registration failed.")
+            }
     }
 
     /**
@@ -88,72 +86,198 @@ class AuthRepository {
             return
         }
 
-        android.util.Log.d("AUTH_DEBUG", "Attempting email login for: $trimmedEmail")
+        Log.d("AUTH_DEBUG", "Attempting Firebase Auth login for: $trimmedEmail")
 
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val loginRequest = LoginRequest(trimmedEmail, password)
-                val response = apiService.login(loginRequest)
-
-                if (response.isSuccessful) {
-                    val loginResponse = response.body()
-                    if (loginResponse != null) {
-                        // Store the session
-                        sessionManager.saveSession(
-                            token = loginResponse.token ?: "",
-                            uid = loginResponse.user?.uid ?: "",
-                            email = loginResponse.user?.email ?: "",
-                            role = loginResponse.user?.role ?: "",
-                            name = loginResponse.user?.fullName ?: "",
-                            phone = loginResponse.user?.phone ?: "",
-                            profileImage = loginResponse.user?.profileImage ?: ""
-                        )
-                        
-                        val role = loginResponse.user.role.trim().uppercase()
-                        android.util.Log.d("AUTH_DEBUG", "MongoDB login SUCCESS | Role=$role")
-                        withContext(Dispatchers.Main) {
-                            onSuccess(role)
+        // Check if admin credentials are provided
+        val isAdminEmail = trimmedEmail.equals("kadhatideepthimayee@gmail.com", ignoreCase = true) || 
+                           trimmedEmail.equals("admin@medplus.com", ignoreCase = true)
+        if (isAdminEmail && password == "deepthi@123") {
+            Log.d("AUTH_DEBUG", "Admin credentials intercepted. Ensuring admin account setup in Firebase.")
+            auth.signInWithEmailAndPassword(trimmedEmail, password)
+                .addOnSuccessListener { authResult ->
+                    val uid = authResult.user?.uid ?: ""
+                    val userMap = hashMapOf(
+                        "uid" to uid,
+                        "fullName" to "Admin Deepthi",
+                        "email" to trimmedEmail,
+                        "role" to "ADMIN",
+                        "phone" to "1234567890",
+                        "profileImage" to ""
+                    )
+                    firestore.collection("users").document(uid).set(userMap, com.google.firebase.firestore.SetOptions.merge())
+                        .addOnSuccessListener {
+                            sessionManager.saveSession(
+                                token = "firebase_session_token",
+                                uid = uid,
+                                email = trimmedEmail,
+                                role = "ADMIN",
+                                name = "Admin Deepthi",
+                                phone = "1234567890",
+                                profileImage = ""
+                            )
+                            Log.d("AUTH_DEBUG", "Admin login successful (Existing account updated)")
+                            onSuccess("ADMIN")
                         }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            onFailure("Login response was empty.")
+                        .addOnFailureListener { e ->
+                            Log.e("AUTH_DEBUG", "Failed to update admin profile in Firestore", e)
+                            onFailure(e.message ?: "Failed to update admin profile in Firestore")
                         }
-                    }
-                } else {
-                    val errorMsg = response.errorBody()?.string() ?: "Invalid email or password."
-                    withContext(Dispatchers.Main) {
-                        onFailure(errorMsg)
-                    }
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("AUTH_DEBUG", "Network error during login", e)
-                withContext(Dispatchers.Main) {
-                    onFailure("Connection failed. Check your internet.")
+                .addOnFailureListener { signInError ->
+                    Log.d("AUTH_DEBUG", "Admin sign-in failed, attempting to register: ${signInError.message}")
+                    auth.createUserWithEmailAndPassword(trimmedEmail, password)
+                        .addOnSuccessListener { authResult ->
+                            val uid = authResult.user?.uid ?: ""
+                            val userMap = hashMapOf(
+                                "uid" to uid,
+                                "fullName" to "Admin Deepthi",
+                                "email" to trimmedEmail,
+                                "role" to "ADMIN",
+                                "phone" to "1234567890",
+                                "profileImage" to ""
+                            )
+                            firestore.collection("users").document(uid).set(userMap)
+                                .addOnSuccessListener {
+                                    sessionManager.saveSession(
+                                        token = "firebase_session_token",
+                                        uid = uid,
+                                        email = trimmedEmail,
+                                        role = "ADMIN",
+                                        name = "Admin Deepthi",
+                                        phone = "1234567890",
+                                        profileImage = ""
+                                    )
+                                    Log.d("AUTH_DEBUG", "Admin login successful (New account registered)")
+                                    onSuccess("ADMIN")
+                                }
+                                .addOnFailureListener { e ->
+                                    onFailure(e.message ?: "Failed to save admin profile in Firestore")
+                                }
+                        }
+                        .addOnFailureListener { signUpError ->
+                            Log.e("AUTH_DEBUG", "Admin registration failed", signUpError)
+                            if (signUpError is com.google.firebase.auth.FirebaseAuthUserCollisionException || 
+                                signUpError.message?.contains("already in use", ignoreCase = true) == true) {
+                                if (trimmedEmail.equals("kadhatideepthimayee@gmail.com", ignoreCase = true)) {
+                                    onFailure("This email is already in use. Please sign in via Google to auto-upgrade to Admin, or use email admin@medplus.com with password deepthi@123.")
+                                } else {
+                                    onFailure("This email is already in use by another account.")
+                                }
+                            } else {
+                                onFailure(signUpError.message ?: "Admin sign-in/registration failed.")
+                            }
+                        }
                 }
-            }
+            return
         }
+
+        auth.signInWithEmailAndPassword(trimmedEmail, password)
+            .addOnSuccessListener { authResult ->
+                val uid = authResult.user?.uid ?: ""
+                
+                firestore.collection("users").document(uid).get()
+                    .addOnSuccessListener { document ->
+                        if (document.exists()) {
+                            val fullName = document.getString("fullName") ?: ""
+                            val userEmail = document.getString("email") ?: trimmedEmail
+                            val phone = document.getString("phone") ?: ""
+                            val role = (document.getString("role") ?: "PATIENT").trim().uppercase()
+                            val profileImage = document.getString("profileImage") ?: ""
+
+                            sessionManager.saveSession(
+                                token = "firebase_session_token",
+                                uid = uid,
+                                email = userEmail,
+                                role = role,
+                                name = fullName,
+                                phone = phone,
+                                profileImage = profileImage
+                            )
+
+                            Log.d("AUTH_DEBUG", "Firebase login SUCCESS | Role=$role")
+                            onSuccess(role)
+                        } else {
+                            Log.w("AUTH_DEBUG", "User profile document not found. Attempting auto-recovery...")
+                            firestore.collection("doctor_profiles").document(uid).get()
+                                .addOnSuccessListener { doc ->
+                                    val detectedRole = if (doc.exists()) "DOCTOR" else "PATIENT"
+                                    val fallbackName = if (doc.exists()) {
+                                        doc.getString("fullName") ?: trimmedEmail.substringBefore("@")
+                                    } else {
+                                        trimmedEmail.substringBefore("@")
+                                    }
+                                    val fallbackPhone = if (doc.exists()) doc.getString("phone") ?: "" else ""
+                                    
+                                    val userMap = hashMapOf(
+                                        "uid" to uid,
+                                        "fullName" to fallbackName,
+                                        "email" to trimmedEmail,
+                                        "phone" to fallbackPhone,
+                                        "role" to detectedRole,
+                                        "createdAt" to Timestamp.now()
+                                    )
+                                    
+                                    firestore.collection("users").document(uid).set(userMap)
+                                        .addOnSuccessListener {
+                                            sessionManager.saveSession(
+                                                token = "firebase_session_token",
+                                                uid = uid,
+                                                email = trimmedEmail,
+                                                role = detectedRole,
+                                                name = fallbackName,
+                                                phone = fallbackPhone,
+                                                profileImage = ""
+                                            )
+                                            Log.d("AUTH_DEBUG", "Recovered user profile document. Role=$detectedRole")
+                                            onSuccess(detectedRole)
+                                        }
+                                        .addOnFailureListener { e ->
+                                            onFailure("Profile data not found, and recovery failed: ${e.message}")
+                                        }
+                                }
+                                .addOnFailureListener {
+                                    onFailure("User profile data not found in database.")
+                                }
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        onFailure(e.message ?: "Failed to load user profile from database.")
+                    }
+            }
+            .addOnFailureListener { e ->
+                Log.e("AUTH_DEBUG", "Firebase Auth sign-in failed", e)
+                onFailure(e.message ?: "Invalid email or password.")
+            }
     }
 
     /**
-     * Forgot Password
+     * Forgot Password / Password Reset
      */
     fun resetPassword(
         email: String,
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        // Can be mocked since standard SMTP is not set up on basic server,
-        // or we can implement mock success
-        onSuccess()
+        auth.sendPasswordResetEmail(email)
+            .addOnSuccessListener {
+                onSuccess()
+            }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to send reset email.")
+            }
     }
 
     /**
      * Logout
      */
     fun logout() {
+        auth.signOut()
         sessionManager.clearSession()
     }
 
+    /**
+     * Google Sign-In helper method
+     */
     fun firebaseAuthWithGoogle(
         credential: Any,
         selectedRole: String,
@@ -161,69 +285,107 @@ class AuthRepository {
         onFailure: (String) -> Unit
     ) {
         val idToken = credential as? String
-        if (idToken == null || idToken.isEmpty()) {
+        if (idToken.isNullOrEmpty()) {
             onFailure("Invalid Google ID token.")
             return
         }
 
-        android.util.Log.d("AUTH_DEBUG", "Attempting Google login for role: $selectedRole")
+        Log.d("AUTH_DEBUG", "Attempting Firebase Google login for role: $selectedRole")
+        val authCredential = GoogleAuthProvider.getCredential(idToken, null)
 
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val googleRequest = GoogleLoginRequest(idToken = idToken, role = selectedRole)
-                val response = apiService.googleLogin(googleRequest)
+        auth.signInWithCredential(authCredential)
+            .addOnSuccessListener { authResult ->
+                val uid = authResult.user?.uid ?: ""
+                val email = authResult.user?.email ?: ""
+                val name = authResult.user?.displayName ?: "Google User"
 
-                if (response.isSuccessful) {
-                    val loginResponse = response.body()
-                    if (loginResponse != null) {
-                        // Store the session
-                        sessionManager.saveSession(
-                            token = loginResponse.token ?: "",
-                            uid = loginResponse.user?.uid ?: "",
-                            email = loginResponse.user?.email ?: "",
-                            role = loginResponse.user?.role ?: "",
-                            name = loginResponse.user?.fullName ?: "",
-                            phone = loginResponse.user?.phone ?: "",
-                            profileImage = loginResponse.user?.profileImage ?: ""
-                        )
+                firestore.collection("users").document(uid).get()
+                    .addOnSuccessListener { document ->
+                        val isTargetAdmin = email.equals("kadhatideepthimayee@gmail.com", ignoreCase = true)
                         
-                        val role = loginResponse.user.role.trim().uppercase()
-                        android.util.Log.d("AUTH_DEBUG", "MongoDB Google login SUCCESS | Role=$role")
-                        withContext(Dispatchers.Main) {
-                            onSuccess(role)
+                        if (document.exists()) {
+                            val fetchedRole = if (isTargetAdmin) "ADMIN" else (document.getString("role") ?: selectedRole).trim().uppercase()
+                            val phone = document.getString("phone") ?: ""
+                            val profileImage = document.getString("profileImage") ?: ""
+
+                            if (isTargetAdmin && document.getString("role") != "ADMIN") {
+                                Log.d("AUTH_DEBUG", "Upgrading existing Google user $email to ADMIN role in Firestore")
+                                firestore.collection("users").document(uid).update("role", "ADMIN")
+                            }
+
+                            sessionManager.saveSession(
+                                token = "firebase_session_token",
+                                uid = uid,
+                                email = email,
+                                role = fetchedRole,
+                                name = name,
+                                phone = phone,
+                                profileImage = profileImage
+                            )
+
+                            Log.d("AUTH_DEBUG", "Firebase Google Sign-In SUCCESS | Role=$fetchedRole")
+                            onSuccess(fetchedRole)
+                        } else {
+                            // First time sign-in with Google, create profile doc
+                            val finalRole = if (isTargetAdmin) "ADMIN" else selectedRole
+                            val userMap = hashMapOf(
+                                "uid" to uid,
+                                "fullName" to name,
+                                "email" to email,
+                                "phone" to "",
+                                "role" to finalRole,
+                                "createdAt" to Timestamp.now()
+                            )
+
+                            firestore.collection("users").document(uid).set(userMap)
+                                .addOnSuccessListener {
+                                    sessionManager.saveSession(
+                                        token = "firebase_session_token",
+                                        uid = uid,
+                                        email = email,
+                                        role = finalRole,
+                                        name = name,
+                                        phone = "",
+                                        profileImage = ""
+                                    )
+                                    Log.d("AUTH_DEBUG", "New Google user Firestore profile created | Role=$finalRole")
+                                    onSuccess(finalRole)
+                                }
+                                .addOnFailureListener { e ->
+                                    onFailure(e.message ?: "Failed to initialize user profile.")
+                                }
                         }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            onFailure("Google Login response was empty.")
-                        }
                     }
-                } else {
-                    val errorBodyString = response.errorBody()?.string() ?: ""
-                    val errorMsg = try {
-                        org.json.JSONObject(errorBodyString).getString("msg")
-                    } catch (e: Exception) {
-                        "Google login failed"
+                    .addOnFailureListener { e ->
+                        onFailure(e.message ?: "Failed to read profile data from database.")
                     }
-                    android.util.Log.e("AUTH_DEBUG", "Google Login API Error: $errorBodyString")
-                    withContext(Dispatchers.Main) {
-                        onFailure(errorMsg)
-                    }
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("AUTH_DEBUG", "Google Login connection exception", e)
-                withContext(Dispatchers.Main) {
-                    onFailure(e.message ?: "Failed to connect to server during Google login")
-                }
             }
-        }
+            .addOnFailureListener { e ->
+                Log.e("AUTH_DEBUG", "Firebase Google authentication failed", e)
+                onFailure(e.message ?: "Google Sign-in failed.")
+            }
     }
 
+    /**
+     * Save user role (mock or compatibility helper)
+     */
     fun saveUserRole(
         role: String,
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        // Mock save user role (normally handled at registration)
-        onSuccess()
+        val uid = auth.currentUser?.uid ?: ""
+        if (uid.isEmpty()) {
+            onFailure("No user is logged in.")
+            return
+        }
+
+        firestore.collection("users").document(uid).update("role", role)
+            .addOnSuccessListener {
+                onSuccess()
+            }
+            .addOnFailureListener { e ->
+                onFailure(e.message ?: "Failed to update role.")
+            }
     }
 }

@@ -60,6 +60,9 @@ data class BookAppointmentUiState(
     val selectedDate: DateItem? = null,
     val selectedTime: String = "",
     
+    // Reschedule
+    val rescheduleId: String? = null,
+    
     // Result
     val confirmedAppointment: com.example.medplus.model.Appointment? = null
 )
@@ -73,6 +76,49 @@ class BookAppointmentViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(BookAppointmentUiState())
     val uiState = _uiState.asStateFlow()
+
+    var rescheduleId: String? = null
+        private set
+
+    fun setRescheduleAppointmentId(id: String) {
+        if (rescheduleId == id) return
+        rescheduleId = id
+        _uiState.update { it.copy(rescheduleId = id, isLoading = true, errorMessage = null) }
+        
+        firestore.collection("appointments").document(id).get()
+            .addOnSuccessListener { doc ->
+                val appointment = doc.toObject(com.example.medplus.model.Appointment::class.java)
+                if (appointment != null) {
+                    val doctorId = appointment.doctorId
+                    val department = appointment.department
+                    
+                    // Fetch the doctor's details
+                    firestore.collection("doctor_profiles").document(doctorId).get()
+                        .addOnSuccessListener { docProfile ->
+                            val doctor = docProfile.toObject(DoctorProfile::class.java)
+                            if (doctor != null) {
+                                _uiState.update { it.copy(
+                                    selectedDoctor = doctor,
+                                    selectedDepartment = department,
+                                    isLoading = false
+                                ) }
+                                // Generate working dates for this doctor
+                                generateAvailableDates(doctor)
+                            } else {
+                                _uiState.update { it.copy(isLoading = false, errorMessage = "Doctor profile not found") }
+                            }
+                        }
+                        .addOnFailureListener { e ->
+                            _uiState.update { it.copy(isLoading = false, errorMessage = e.message ?: "Failed to fetch doctor details") }
+                        }
+                } else {
+                    _uiState.update { it.copy(isLoading = false, errorMessage = "Appointment not found") }
+                }
+            }
+            .addOnFailureListener { e ->
+                _uiState.update { it.copy(isLoading = false, errorMessage = e.message ?: "Failed to fetch appointment details") }
+            }
+    }
 
     /**
      * Navigation: Move to Confirmation step
@@ -192,20 +238,38 @@ class BookAppointmentViewModel : ViewModel() {
      * Helper to parse time in multiple common formats safely
      */
     private fun parseLocalTime(timeStr: String): LocalTime? {
-        val formats = listOf(
-            DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH),
-            DateTimeFormatter.ofPattern("hh:mm a", Locale.ENGLISH),
-            DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH),
-            DateTimeFormatter.ofPattern("H:mm", Locale.ENGLISH)
-        )
+        val cleanTime = timeStr.trim()
+        if (cleanTime.isBlank()) return null
         
-        for (format in formats) {
-            try {
-                return LocalTime.parse(timeStr.trim(), format)
-            } catch (_: Exception) {
-                continue
+        // Try parsing using java.text.SimpleDateFormat with US, English, and Default locales
+        val locales = listOf(Locale.US, Locale.ENGLISH, Locale.getDefault())
+        val formats = listOf("hh:mm a", "h:mm a", "HH:mm", "H:mm")
+        
+        for (locale in locales) {
+            for (formatStr in formats) {
+                try {
+                    val sdf = java.text.SimpleDateFormat(formatStr, locale)
+                    val date = sdf.parse(cleanTime)
+                    if (date != null) {
+                        val cal = java.util.Calendar.getInstance()
+                        cal.time = date
+                        return LocalTime.of(cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE))
+                    }
+                } catch (_: Exception) {}
             }
         }
+        
+        // Fallback to java.time parsing (case-insensitive English)
+        for (pattern in formats) {
+            try {
+                val formatter = java.time.format.DateTimeFormatterBuilder()
+                    .parseCaseInsensitive()
+                    .appendPattern(pattern)
+                    .toFormatter(Locale.ENGLISH)
+                return LocalTime.parse(cleanTime, formatter)
+            } catch (_: Exception) {}
+        }
+        
         return null
     }
 
@@ -315,25 +379,23 @@ class BookAppointmentViewModel : ViewModel() {
         }
     }
 
-    private val context = com.google.firebase.FirebaseApp.getInstance().applicationContext
-    private val apiService = com.example.medplus.data.network.RetrofitClient.getApiService(context)
+    private val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
 
     private fun fetchBookedSlots(doctorId: String, date: String, onResult: (List<String>) -> Unit) {
-        viewModelScope.launch {
-            try {
-                val response = apiService.getAppointmentsByDoctorId(doctorId)
-                if (response.isSuccessful && response.body() != null) {
-                    val booked = response.body()!!
-                        .filter { it.date == date && it.status == "UPCOMING" }
-                        .map { it.time }
-                    onResult(booked)
-                } else {
-                    onResult(emptyList())
+        firestore.collection("appointments")
+            .whereEqualTo("doctorId", doctorId)
+            .whereEqualTo("date", date)
+            .whereEqualTo("status", "UPCOMING")
+            .get()
+            .addOnSuccessListener { querySnapshot ->
+                val booked = querySnapshot.documents.mapNotNull { doc ->
+                    doc.getString("time")
                 }
-            } catch (e: Exception) {
+                onResult(booked)
+            }
+            .addOnFailureListener {
                 onResult(emptyList())
             }
-        }
     }
 
     fun bookAppointment() {
@@ -349,31 +411,60 @@ class BookAppointmentViewModel : ViewModel() {
         Log.d("APPOINTMENT_BOOKING_DEBUG", "Doctor UID: ${doctor.uid}")
         Log.d("APPOINTMENT_BOOKING_DEBUG", "Selected Date: $date")
         Log.d("APPOINTMENT_BOOKING_DEBUG", "Selected Time: $time")
+        Log.d("APPOINTMENT_BOOKING_DEBUG", "Reschedule ID: $rescheduleId")
 
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
 
-        repository.createAppointment(
-            doctorId = doctor.uid,
-            doctorName = doctor.fullName,
-            department = department,
-            date = date,
-            time = time,
-            onSuccess = { appointment ->
-                Log.d("APPOINTMENT_BOOKING_DEBUG", "SUCCESS: Appointment created. ID: ${appointment.appointmentId}, Token: ${appointment.tokenNumber}")
-                _uiState.update { it.copy(
-                    isLoading = false, 
-                    isBookingSuccessful = true,
-                    currentStep = BookingStep.BOOKING_SUCCESS,
-                    confirmedAppointment = appointment
-                ) }
-            },
-            onFailure = { error ->
-                Log.e("APPOINTMENT_BOOKING_DEBUG", "FAILURE: $error")
-                _uiState.update { it.copy(
-                    isLoading = false, 
-                    errorMessage = error ?: "Unable to confirm appointment. Please try again."
-                ) }
-            }
-        )
+        val rId = rescheduleId
+        if (rId != null) {
+            repository.rescheduleAppointment(
+                appointmentId = rId,
+                doctorId = doctor.uid,
+                doctorName = doctor.fullName,
+                department = department,
+                date = date,
+                time = time,
+                onSuccess = { appointment ->
+                    Log.d("APPOINTMENT_BOOKING_DEBUG", "SUCCESS: Appointment rescheduled. ID: ${appointment.appointmentId}, Token: ${appointment.tokenNumber}")
+                    _uiState.update { it.copy(
+                        isLoading = false,
+                        isBookingSuccessful = true,
+                        currentStep = BookingStep.BOOKING_SUCCESS,
+                        confirmedAppointment = appointment
+                    ) }
+                },
+                onFailure = { error ->
+                    Log.e("APPOINTMENT_BOOKING_DEBUG", "FAILURE: $error")
+                    _uiState.update { it.copy(
+                        isLoading = false,
+                        errorMessage = error ?: "Unable to reschedule appointment. Please try again."
+                    ) }
+                }
+            )
+        } else {
+            repository.createAppointment(
+                doctorId = doctor.uid,
+                doctorName = doctor.fullName,
+                department = department,
+                date = date,
+                time = time,
+                onSuccess = { appointment ->
+                    Log.d("APPOINTMENT_BOOKING_DEBUG", "SUCCESS: Appointment created. ID: ${appointment.appointmentId}, Token: ${appointment.tokenNumber}")
+                    _uiState.update { it.copy(
+                        isLoading = false, 
+                        isBookingSuccessful = true,
+                        currentStep = BookingStep.BOOKING_SUCCESS,
+                        confirmedAppointment = appointment
+                    ) }
+                },
+                onFailure = { error ->
+                    Log.e("APPOINTMENT_BOOKING_DEBUG", "FAILURE: $error")
+                    _uiState.update { it.copy(
+                        isLoading = false, 
+                        errorMessage = error ?: "Unable to confirm appointment. Please try again."
+                    ) }
+                }
+            )
+        }
     }
 }

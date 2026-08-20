@@ -59,47 +59,7 @@ const Auth: React.FC = () => {
   const [selectedGoogleRole, setSelectedGoogleRole] = useState<'PATIENT' | 'DOCTOR'>('PATIENT');
   const selectedGoogleRoleRef = React.useRef<'PATIENT' | 'DOCTOR'>('PATIENT');
 
-  useEffect(() => {
-    // Dynamic script loading for Google Identity Services as fallback
-    if (!document.getElementById('google-gsi-client-script')) {
-      const script = document.createElement('script');
-      script.id = 'google-gsi-client-script';
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.defer = true;
-      document.body.appendChild(script);
-    }
-  }, []);
 
-  useEffect(() => {
-    if (showGoogleRoleModal) {
-      const initGoogleSignIn = () => {
-        const google = (window as any).google;
-        if (google && google.accounts && google.accounts.id) {
-          google.accounts.id.initialize({
-            client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || "366692040766-iduuu65jevefkpt2n04na5flh294jpec.apps.googleusercontent.com",
-            callback: handleGoogleCredentialResponse,
-          });
-
-          google.accounts.id.renderButton(
-            document.getElementById("google-signin-button-container"),
-            { 
-              theme: "outline", 
-              size: "large", 
-              width: 320,
-              text: "continue_with",
-              shape: "rectangular"
-            }
-          );
-        } else {
-          setTimeout(initGoogleSignIn, 100);
-        }
-      };
-
-      const timer = setTimeout(initGoogleSignIn, 150);
-      return () => clearTimeout(timer);
-    }
-  }, [showGoogleRoleModal]);
 
   // Global loading and toast alerts
   const [loading, setLoading] = useState(false);
@@ -216,16 +176,15 @@ const Auth: React.FC = () => {
     }
   };
 
-  const handleGoogleCredentialResponse = async (response: any) => {
+  const handleFirebaseGoogleSignIn = async () => {
     setShowGoogleRoleModal(false);
     setLoading(true);
     try {
       const role = selectedGoogleRoleRef.current;
-      await googleSignIn(response.credential, role);
+      await googleSignIn(role);
       triggerToast('Google authentication successful', 'success');
-      window.location.reload();
     } catch (err: any) {
-      const errMsg = err.response?.data?.msg || err.message || 'Google authentication failed';
+      const errMsg = err.message || 'Google authentication failed';
       triggerToast(errMsg, 'error');
     } finally {
       setLoading(false);
@@ -918,11 +877,23 @@ const Auth: React.FC = () => {
                   </button>
                 </div>
 
-                <div className="mt-6 flex flex-col items-center justify-center border-t border-slate-100 pt-5">
+                 <div className="mt-6 flex flex-col items-center justify-center border-t border-slate-100 pt-5 w-full">
                   <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-3">
                     Continue as {selectedGoogleRole === 'DOCTOR' ? 'Doctor' : 'Patient'}
                   </p>
-                  <div id="google-signin-button-container" className="w-full flex justify-center text-center"></div>
+                  <button
+                    type="button"
+                    onClick={handleFirebaseGoogleSignIn}
+                    className="w-full flex items-center justify-center gap-2.5 bg-white hover:bg-slate-50 border border-slate-350 text-slate-700 font-extrabold text-xs py-2.5 px-4 rounded-xl transition-all shadow-sm active:scale-98 cursor-pointer select-none"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24">
+                      <path fill="#EA4335" d="M12 5.04c1.66 0 3.2.57 4.38 1.69l3.27-3.27C17.68 1.54 14.98 1 12 1 7.35 1 3.37 3.67 1.39 7.56l3.85 2.99c.9-2.7 3.42-4.51 6.76-4.51z"/>
+                      <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.34H12v4.47h6.47c-.29 1.51-1.14 2.78-2.4 3.62l3.71 2.87c2.17-2 3.71-4.94 3.71-8.62z"/>
+                      <path fill="#FBBC05" d="M5.24 10.55c-.24-.72-.38-1.49-.38-2.28 0-.79.14-1.56.38-2.28L1.39 3.01C.5 4.81 0 6.85 0 9s.5 4.19 1.39 5.99l3.85-2.99c-.24-.72-.38-1.49-.38-2.28z"/>
+                      <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.91l-3.71-2.87c-1.04.7-2.38 1.12-4.25 1.12-3.34 0-5.86-1.81-6.87-4.51L1.28 16.82C3.26 20.33 7.24 23 12 23z"/>
+                    </svg>
+                    <span>Continue with Google</span>
+                  </button>
                 </div>
 
                 <button

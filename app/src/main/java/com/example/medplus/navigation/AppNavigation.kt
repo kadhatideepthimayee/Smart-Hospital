@@ -470,9 +470,19 @@ fun AppNavigation(
 
             val dashboardViewModel: DashboardViewModel = viewModel()
             val uiState by dashboardViewModel.uiState.collectAsStateWithLifecycle()
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
-            LaunchedEffect(Unit) {
-                dashboardViewModel.loadDashboardData()
+            DisposableEffect(lifecycleOwner) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                        android.util.Log.d("PATIENT_DASHBOARD_DEBUG", "Dashboard resumed. Loading fresh data.")
+                        dashboardViewModel.loadDashboardData()
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
             }
 
             PatientDashboardScreen(
@@ -484,7 +494,7 @@ fun AppNavigation(
                     navController.navigate(Screen.Profile.route)
                 },
                 onBookAppointmentClick = {
-                    navController.navigate(Screen.BookAppointment.route)
+                    navController.navigate(Screen.BookAppointment.createRoute())
                 },
                 onMyAppointmentsClick = {
                     navController.navigate(Screen.MyAppointments.route)
@@ -504,7 +514,9 @@ fun AppNavigation(
                 onViewAppointmentDetailsClick = { appointmentId ->
                     navController.navigate(Screen.AppointmentDetails.createRoute(appointmentId))
                 },
-                onRescheduleAppointmentClick = { /* TODO */ }
+                onRescheduleAppointmentClick = { appointmentId ->
+                    navController.navigate(Screen.BookAppointment.createRoute(appointmentId))
+                }
             )
         }
 
@@ -855,8 +867,25 @@ fun AppNavigation(
         }
 
         // Book Appointment
-        composable(Screen.BookAppointment.route) {
+        composable(
+            route = Screen.BookAppointment.route,
+            arguments = listOf(
+                androidx.navigation.navArgument("rescheduleId") {
+                    type = androidx.navigation.NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            val rescheduleId = backStackEntry.arguments?.getString("rescheduleId")?.takeIf { it != "{rescheduleId}" && it.isNotEmpty() }
             val bookAppointmentViewModel: BookAppointmentViewModel = viewModel()
+            
+            LaunchedEffect(rescheduleId) {
+                rescheduleId?.let {
+                    bookAppointmentViewModel.setRescheduleAppointmentId(it)
+                }
+            }
+
             BookAppointmentScreen(
                 viewModel = bookAppointmentViewModel,
                 onBackClick = { navController.popBackStack() },
@@ -880,7 +909,7 @@ fun AppNavigation(
                 viewModel = myAppointmentsViewModel,
                 onBackClick = { navController.popBackStack() },
                 onBookAppointmentClick = {
-                    navController.navigate(Screen.BookAppointment.route)
+                    navController.navigate(Screen.BookAppointment.createRoute())
                 },
                 onViewDetailsClick = { appointmentId ->
                     navController.navigate(Screen.AppointmentDetails.createRoute(appointmentId))

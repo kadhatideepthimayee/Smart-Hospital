@@ -35,7 +35,8 @@ fun AppointmentDetailsScreen(
     onViewLiveQueueClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val apiService = remember { com.example.medplus.data.network.RetrofitClient.getApiService(context) }
+    val firestore = remember { com.google.firebase.firestore.FirebaseFirestore.getInstance() }
+    val dashboardRepo = remember { com.example.medplus.repository.DashboardRepository() }
     val scope = rememberCoroutineScope()
     val appointmentRepo = remember { AppointmentRepository() }
 
@@ -64,58 +65,63 @@ fun AppointmentDetailsScreen(
         error = null
         scope.launch {
             try {
-                val apptResponse = apiService.getAppointmentDetails(appointmentId)
-                if (apptResponse.isSuccessful && apptResponse.body() != null) {
-                    val appt = apptResponse.body()!!
-                    appointment = appt
+                firestore.collection("appointments").document(appointmentId).get()
+                    .addOnSuccessListener { apptDoc ->
+                        val appt = apptDoc.toObject(Appointment::class.java)?.copy(appointmentId = apptDoc.id)
+                        if (appt != null) {
+                            appointment = appt
 
-                    // Fetch Doctor Consultation Fee
-                    val docProfileResponse = apiService.getDoctorProfileByUid(appt.doctorId)
-                    if (docProfileResponse.isSuccessful) {
-                        consultationFee = docProfileResponse.body()?.consultationFee
-                    }
-
-                    // Start live queue polling
-                    queuePollingJob?.cancel()
-                    queuePollingJob = scope.launch {
-                        while (true) {
-                            try {
-                                val queueResponse = apiService.getLiveQueue(appointmentId)
-                                if (queueResponse.isSuccessful && queueResponse.body() != null) {
-                                    val liveQueue = queueResponse.body()!!
-                                    isQueueActive = liveQueue.isActive
-                                    queueStatus = liveQueue.status
-                                    patientsAhead = liveQueue.patientsAhead
-                                    estimatedWaitMinutes = liveQueue.estimatedWaitMinutes
-                                } else {
-                                    isQueueActive = false
+                            // Fetch Doctor Consultation Fee
+                            firestore.collection("doctor_profiles").document(appt.doctorId).get()
+                                .addOnSuccessListener { docProfileDoc ->
+                                    if (docProfileDoc.exists()) {
+                                        consultationFee = docProfileDoc.getDouble("consultationFee")
+                                    }
                                 }
-                            } catch (e: Exception) {
-                                isQueueActive = false
-                            }
-                            kotlinx.coroutines.delay(5000)
-                        }
-                    }
 
-                    // Fetch if feedback already submitted
-                    try {
-                        val fbResponse = apiService.checkFeedbackExists(appointmentId)
-                        if (fbResponse.isSuccessful && fbResponse.body() != null) {
-                            val fb = fbResponse.body()!!
-                            hasSubmittedFeedback = fb.exists
-                            if (fb.exists && fb.feedback != null) {
-                                existingRating = fb.feedback.rating
-                                existingFeedbackText = fb.feedback.feedback
+                            // Start live queue polling via flow
+                            queuePollingJob?.cancel()
+                            queuePollingJob = scope.launch {
+                                dashboardRepo.getLiveQueueUpdates(appointmentId).collect { liveQueue ->
+                                    if (liveQueue != null) {
+                                        isQueueActive = liveQueue.isActive
+                                        queueStatus = liveQueue.status
+                                        patientsAhead = liveQueue.patientsAhead
+                                        estimatedWaitMinutes = liveQueue.estimatedWaitMinutes
+                                    } else {
+                                        isQueueActive = false
+                                    }
+                                }
                             }
+
+                            // Fetch if feedback already submitted
+                            firestore.collection("feedback")
+                                .whereEqualTo("appointmentId", appointmentId)
+                                .get()
+                                .addOnSuccessListener { fbSnap ->
+                                    val fbDoc = fbSnap.documents.firstOrNull()
+                                    if (fbDoc != null) {
+                                        hasSubmittedFeedback = true
+                                        existingRating = fbDoc.getLong("rating")?.toInt() ?: 0
+                                        existingFeedbackText = fbDoc.getString("feedback") ?: ""
+                                    } else {
+                                        hasSubmittedFeedback = false
+                                    }
+                                    isLoading = false
+                                }
+                                .addOnFailureListener {
+                                    hasSubmittedFeedback = false
+                                    isLoading = false
+                                }
+                        } else {
+                            error = "Failed to load appointment details"
+                            isLoading = false
                         }
-                    } catch (e: Exception) {
-                        hasSubmittedFeedback = false
                     }
-                    isLoading = false
-                } else {
-                    error = "Failed to load appointment details"
-                    isLoading = false
-                }
+                    .addOnFailureListener { e ->
+                        error = e.message ?: "Failed to load appointment details"
+                        isLoading = false
+                    }
             } catch (e: Exception) {
                 error = e.message ?: "Failed to load details"
                 isLoading = false

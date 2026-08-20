@@ -23,7 +23,9 @@ sealed class Screen(val route: String) {
 
     // Patient
     object PatientDashboard : Screen(route = "patient_dashboard")
-    object BookAppointment : Screen(route = "book_appointment")
+    object BookAppointment : Screen(route = "book_appointment?rescheduleId={rescheduleId}") {
+        fun createRoute(rescheduleId: String? = null) = if (rescheduleId != null) "book_appointment?rescheduleId=$rescheduleId" else "book_appointment"
+    }
     object MyAppointments : Screen(route = "my_appointments")
     object AppointmentDetails : Screen(route = "appointment_details/{appointmentId}") {
         fun createRoute(appointmentId: String) = "appointment_details/$appointmentId"
