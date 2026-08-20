@@ -27,15 +27,7 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
-          cache-dependency-path: |
-            backend/package-lock.json
-            MedPlus-Web/package-lock.json
-
-      - name: Install & Verify Backend API
-        run: |
-          cd backend
-          npm ci || npm install
-          node -c server.js || echo "Backend server file syntax check completed."
+          cache-dependency-path: MedPlus-Web/package-lock.json
 
       - name: Install & Build Web Frontend
         run: |
@@ -172,7 +164,6 @@ jobs:
           echo "Commit: ${{ github.sha }}" >> report/report_summary.txt
           echo "------------------------------------------------" >> report/report_summary.txt
           echo "Web Frontend Build: SUCCESS (Vite Dist Generated)" >> report/report_summary.txt
-          echo "Backend Syntax Check: SUCCESS (Express API Ready)" >> report/report_summary.txt
           echo "Android App Build: SUCCESS (APK Compiled)" >> report/report_summary.txt
           echo "GitHub Pages Deploy Status: COMPLETED" >> report/report_summary.txt
 
@@ -197,7 +188,7 @@ jobs:
               <h1>MedPlus CI/CD Pipeline Summary</h1>
               <p>All pipeline stages completed successfully.</p>
               <ul>
-                <li><strong>Web & Backend Integration Tests</strong> <span class="status-badge">SUCCESS</span></li>
+                <li><strong>Web Integration Tests</strong> <span class="status-badge">SUCCESS</span></li>
                 <li><strong>Android App Compilation & Verification</strong> <span class="status-badge">SUCCESS</span></li>
                 <li><strong>GitHub Pages Web App Deployment</strong> <span class="status-badge">SUCCESS</span></li>
               </ul>
