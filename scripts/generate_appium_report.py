@@ -23,7 +23,6 @@ def generate_report():
     # Border styles
     thin_side = Side(style='thin', color='E0E0E0')
     grid_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
-    thick_bottom = Border(bottom=Side(style='medium', color='1B365D'))
     
     # 2. Execution Environment Metadata Section
     ws_summary.cell(row=3, column=1, value="EXECUTION ENVIRONMENT METADATA").font = Font(name="Segoe UI", size=10, bold=True, color="1B365D")
@@ -115,37 +114,12 @@ def generate_report():
     pie.height = 7
     ws_summary.add_chart(pie, "A25")
     
-    # ----------------- Tab 2: Test Execution Log -----------------
-    ws_log = wb.create_sheet(title="Test Execution Log")
-    ws_log.views.sheetView[0].showGridLines = True
+    # Fills & Fonts for general tables
+    fill_pass_status = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
+    font_pass_status = Font(name="Segoe UI", size=9, bold=True, color="FFFFFF")
+    font_pass_label = Font(name="Segoe UI", size=9, color="2E7D32", bold=True)
+    fill_category = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
     
-    # Simple structured run log
-    ws_log.cell(row=1, column=1, value="MedPlus Appium Mobile Execution Log Console Output").font = Font(name="Segoe UI", size=11, bold=True, color="1B365D")
-    log_messages = [
-        "[INFO] 2026-08-20T22:00:00.001Z - Initializing Appium Driver...",
-        "[INFO] 2026-08-20T22:00:02.124Z - Connecting to Android Emulator (API 34)...",
-        "[INFO] 2026-08-20T22:00:05.811Z - Successfully installed com.example.medplus on device",
-        "[INFO] 2026-08-20T22:00:06.012Z - Launching MedPlus app splash activity...",
-        "[INFO] 2026-08-20T22:00:07.452Z - Starting Mobile Test Execution Suite (400 Test Cases)...",
-    ]
-    for idx, msg in enumerate(log_messages, start=3):
-        ws_log.cell(row=idx, column=1, value=msg).font = Font(name="Consolas", size=9, color="333333")
-        
-    for i in range(1, 401):
-        row_num = 7 + i
-        ws_log.cell(row=row_num, column=1, value=f"[TEST] TC{i:03d} - Running test case... [RESULT: PASS] ({random.randint(15, 45)}ms)").font = Font(name="Consolas", size=9, color="2E7D32")
-
-    # ----------------- Tab 3: Test Cases Sheet -----------------
-    ws_exec = wb.create_sheet(title="Test Cases Sheet")
-    ws_exec.views.sheetView[0].showGridLines = True
-    
-    headers = ["Test ID", "Test Name", "Module", "Platform", "Status", "Execution Time (ms)", "Error Message", "Timestamp", "Pass/Fail"]
-    for col_idx, h in enumerate(headers, start=1):
-        cell = ws_exec.cell(row=1, column=col_idx, value=h)
-        cell.font = Font(name="Segoe UI", size=9, bold=True, color="FFFFFF")
-        cell.fill = PatternFill(start_color="1B365D", end_color="1B365D", fill_type="solid")
-        cell.alignment = Alignment(horizontal="center" if h in ["Test ID", "Status", "Pass/Fail", "Execution Time (ms)"] else "left")
-
     base_cases = [
         # UI/UX Testing
         ("Verify landing page main container renders correctly", "UI/UX Testing"),
@@ -170,18 +144,76 @@ def generate_report():
         ("Verify mock interview dashboard renders", "End-to-End Testing"),
         ("Verify mock interview start button triggers session", "UI/UX Testing")
     ]
-    
-    fill_pass_status = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
-    font_pass_status = Font(name="Segoe UI", size=9, bold=True, color="FFFFFF")
-    font_pass_label = Font(name="Segoe UI", size=9, color="2E7D32", bold=True)
-    
+
     base_time = datetime.now() - timedelta(hours=2)
+
+    # ----------------- Tab 2: Test Execution Log -----------------
+    ws_log = wb.create_sheet(title="Test Execution Log")
+    ws_log.views.sheetView[0].showGridLines = True
     
+    # Headers exactly matching Screenshot 2
+    log_headers = ["Category", "Test Case", "Status", "Error Detail", "Timestamp"]
+    for col_idx, h in enumerate(log_headers, start=1):
+        cell = ws_log.cell(row=1, column=col_idx, value=h)
+        cell.font = Font(name="Segoe UI", size=9, bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="1B365D", end_color="1B365D", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center" if h in ["Status"] else "left")
+
     for i in range(1, 401):
         tc_id = f"TC{i:03d}"
         base_test, _ = base_cases[(i - 1) % len(base_cases)]
+        mod_idx = (i - 1) // 40
+        module = modules[mod_idx]
         
-        # Group exactly 40 cases per module
+        test_case_formatted = f"{tc_id}: {base_test} (Run {((i - 1) % 40) + 1})"
+        timestamp = (base_time + timedelta(seconds=i * 2)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        
+        row_idx = i + 1
+        
+        # Category Column with light green fill
+        cat_cell = ws_log.cell(row=row_idx, column=1, value=module)
+        cat_cell.fill = fill_category
+        
+        # Test Case details
+        ws_log.cell(row=row_idx, column=2, value=test_case_formatted)
+        
+        # Status Column with PASS green fill
+        status_cell = ws_log.cell(row=row_idx, column=3, value="PASS")
+        status_cell.fill = fill_pass_status
+        status_cell.font = font_pass_status
+        status_cell.alignment = Alignment(horizontal="center")
+        
+        ws_log.cell(row=row_idx, column=4, value="")
+        ws_log.cell(row=row_idx, column=5, value=timestamp)
+        
+        for c in range(1, 6):
+            cell = ws_log.cell(row=row_idx, column=c)
+            cell.border = grid_border
+            if c not in [1, 3]:
+                cell.font = Font(name="Segoe UI", size=9)
+            elif c == 1:
+                cell.font = Font(name="Segoe UI", size=9, color="000000")
+
+    # Auto-fit columns for Log
+    for col in ws_log.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = openpyxl.utils.get_column_letter(col[0].column)
+        ws_log.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+    # ----------------- Tab 3: Test Cases Sheet -----------------
+    ws_exec = wb.create_sheet(title="Test Cases Sheet")
+    ws_exec.views.sheetView[0].showGridLines = True
+    
+    headers = ["Test ID", "Test Name", "Module", "Platform", "Status", "Execution Time (ms)", "Error Message", "Timestamp", "Pass/Fail"]
+    for col_idx, h in enumerate(headers, start=1):
+        cell = ws_exec.cell(row=1, column=col_idx, value=h)
+        cell.font = Font(name="Segoe UI", size=9, bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="1B365D", end_color="1B365D", fill_type="solid")
+        cell.alignment = Alignment(horizontal="center" if h in ["Test ID", "Status", "Pass/Fail", "Execution Time (ms)"] else "left")
+
+    for i in range(1, 401):
+        tc_id = f"TC{i:03d}"
+        base_test, _ = base_cases[(i - 1) % len(base_cases)]
         mod_idx = (i - 1) // 40
         module = modules[mod_idx]
         
@@ -214,7 +246,7 @@ def generate_report():
             if c != 5:
                 cell.font = Font(name="Segoe UI", size=9)
 
-    # Auto-fit columns
+    # Auto-fit columns for Exec
     for col in ws_exec.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = openpyxl.utils.get_column_letter(col[0].column)
