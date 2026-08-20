@@ -55,15 +55,20 @@ def generate_report():
         cell.alignment = Alignment(horizontal="center")
         cell.border = grid_border
         
-    metric_values = ["400", "400", "0", "100.0%", "✔ 100% PASS RATE APPROVED"]
+    # Store numerical metrics as raw numbers (int/float) so Excel can build the pie chart
+    metric_values = [400, 400, 0, 1.0, "✔ 100% PASS RATE APPROVED"]
     for col_idx, v in enumerate(metric_values, start=2):
         cell = ws_summary.cell(row=10, column=col_idx, value=v)
         cell.alignment = Alignment(horizontal="center")
         cell.border = grid_border
-        if v == "✔ 100% PASS RATE APPROVED":
+        
+        if col_idx == 5:  # Pass Rate
+            cell.number_format = '0.0%'
+            cell.font = Font(name="Segoe UI", size=9, bold=True)
+        elif v == "✔ 100% PASS RATE APPROVED":
             cell.font = Font(name="Segoe UI", size=9, bold=True, color="1B5E20")
             cell.fill = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
-        elif v == "0":
+        elif v == 0:
             cell.font = Font(name="Segoe UI", size=9, color="757575")
         else:
             cell.font = Font(name="Segoe UI", size=9, bold=True)
@@ -91,7 +96,10 @@ def generate_report():
         ws_summary.cell(row=r, column=2, value=40).alignment = Alignment(horizontal="center")
         ws_summary.cell(row=r, column=3, value=40).alignment = Alignment(horizontal="center")
         ws_summary.cell(row=r, column=4, value=0).alignment = Alignment(horizontal="center")
-        ws_summary.cell(row=r, column=5, value="100.0%").alignment = Alignment(horizontal="center")
+        
+        pr_cell = ws_summary.cell(row=r, column=5, value=1.0)
+        pr_cell.alignment = Alignment(horizontal="center")
+        pr_cell.number_format = '0.0%'
         
         status_cell = ws_summary.cell(row=r, column=6, value="✔ PASS")
         status_cell.font = Font(name="Segoe UI", size=9, bold=True, color="1B5E20")
@@ -103,7 +111,7 @@ def generate_report():
             if col != 6:
                 c.font = Font(name="Segoe UI", size=9)
                 
-    # 5. Add Pie Chart in Summary Sheet (A24 onwards)
+    # 5. Add Pie Chart in Summary Sheet (A25 onwards)
     pie = PieChart()
     labels = Reference(ws_summary, min_col=3, max_col=4, min_row=9, max_row=9)
     data = Reference(ws_summary, min_col=3, max_col=4, min_row=10, max_row=10)
