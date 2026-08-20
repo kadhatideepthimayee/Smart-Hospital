@@ -88,33 +88,48 @@ class DoctorDashboardViewModel : ViewModel() {
         }
     }
 
+    private fun updateAppointmentState(appointments: List<Appointment>) {
+        val todayStr = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.ENGLISH))
+        
+        val todayAppointments = appointments.filter { it.date == todayStr }.sortedBy { it.timestamp?.seconds ?: 0L }
+        val todayCount = todayAppointments.size
+        val pendingCount = appointments.count { it.status.trim().uppercase() != "COMPLETED" && it.status.trim().uppercase() != "CANCELLED" }
+        val completedCount = appointments.count { it.status.trim().uppercase() == "COMPLETED" }
+        
+        val nextAppointment = appointments
+            .filter { it.status.trim().uppercase() != "COMPLETED" && it.status.trim().uppercase() != "CANCELLED" }
+            .sortedBy { it.timestamp?.seconds ?: 0L }
+            .firstOrNull()
+
+        _uiState.update { it.copy(
+            todayAppointments = todayAppointments,
+            todayCount = todayCount,
+            pendingCount = pendingCount,
+            completedCount = completedCount,
+            nextAppointment = nextAppointment,
+            isAppointmentError = false
+        ) }
+    }
+
     private fun observeAppointments() {
         viewModelScope.launch {
             appointmentRepository.getDoctorAppointmentsFlow().collectLatest { appointments ->
                 android.util.Log.d("DOCTOR_APPOINTMENT_DEBUG", "Realtime appointments count: ${appointments.size}")
-                val todayStr = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.ENGLISH))
-                
-                val todayAppointments = appointments.filter { it.date == todayStr }.sortedBy { it.timestamp?.seconds ?: 0L }
-                val todayCount = todayAppointments.size
-                val pendingCount = appointments.count { it.status.trim().uppercase() != "COMPLETED" && it.status.trim().uppercase() != "CANCELLED" }
-                val completedCount = appointments.count { it.status.trim().uppercase() == "COMPLETED" }
-                
-                // Find Next Appointment (nearest future appointment)
-                val nextAppointment = appointments
-                    .filter { it.status.trim().uppercase() != "COMPLETED" && it.status.trim().uppercase() != "CANCELLED" }
-                    .sortedBy { it.timestamp?.seconds ?: 0L }
-                    .firstOrNull()
-
-                _uiState.update { it.copy(
-                    todayAppointments = todayAppointments,
-                    todayCount = todayCount,
-                    pendingCount = pendingCount,
-                    completedCount = completedCount,
-                    nextAppointment = nextAppointment,
-                    isAppointmentError = false
-                ) }
+                updateAppointmentState(appointments)
             }
         }
+    }
+
+    fun refreshAppointments() {
+        val uid = sessionManager.getUserId() ?: return
+        appointmentRepository.getDoctorAppointments(
+            onSuccess = { list ->
+                updateAppointmentState(list)
+            },
+            onFailure = { error ->
+                android.util.Log.e("DOCTOR_APPOINTMENT_DEBUG", "Failed to refresh appointments: $error")
+            }
+        )
     }
 
     fun loadDashboardData() {
@@ -125,6 +140,8 @@ class DoctorDashboardViewModel : ViewModel() {
         android.util.Log.d("DOCTOR_SCHEDULE_DEBUG", "Reloading dashboard doctor profile")
         
         _uiState.update { it.copy(isLoading = true, errorMessage = null, successMessage = null, isAppointmentError = false) }
+
+        refreshAppointments()
 
         viewModelScope.launch {
             // Fetch Profile
@@ -194,6 +211,7 @@ class DoctorDashboardViewModel : ViewModel() {
                     onSuccess = {
                         android.util.Log.d("DOCTOR_CONSULTATION_DEBUG", "Consultation updated successfully")
                         _uiState.update { it.copy(actionLoading = false) }
+                        refreshAppointments()
                         loadDashboardData()
                     },
                     onFailure = { error ->
@@ -241,6 +259,7 @@ class DoctorDashboardViewModel : ViewModel() {
                                 appointmentRepository.updateAppointmentStatus(appointmentId, doctorId, "COMPLETED",
                                     onSuccess = {
                                         _uiState.update { it.copy(actionLoading = false, successMessage = "Consultation completed and medical record saved.") }
+                                        refreshAppointments()
                                         loadDashboardData()
                                     },
                                     onFailure = { error ->
@@ -270,6 +289,7 @@ class DoctorDashboardViewModel : ViewModel() {
                     onSuccess = {
                         android.util.Log.d("DOCTOR_CONSULTATION_DEBUG", "Consultation updated successfully")
                         _uiState.update { it.copy(actionLoading = false, successMessage = "Consultation completed and medical record saved.") }
+                        refreshAppointments()
                         loadDashboardData()
                     },
                     onFailure = { error ->

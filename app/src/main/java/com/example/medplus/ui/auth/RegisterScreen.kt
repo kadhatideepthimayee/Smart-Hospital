@@ -139,23 +139,7 @@ fun RegisterScreen(
                 .padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Configuration Gear Icon
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp),
-                contentAlignment = Alignment.TopEnd
-            ) {
-                IconButton(onClick = { showApiConfigDialog = true }) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Configure API Server",
-                        tint = SecondaryText
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // ── BRANDING ──────────────────────────────────────────────────
             BrandHeaderCompact()

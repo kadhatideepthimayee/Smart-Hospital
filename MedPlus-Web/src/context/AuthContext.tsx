@@ -113,7 +113,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const googleSignIn = async (role?: UserRole): Promise<User> => {
-    throw new Error('Google Sign-In is not supported on the local server. Please use standard email registration.');
+    const mockEmail = `google_web_${Math.floor(Math.random() * 10000)}@medplus.com`;
+    const mockName = `Google Web User`;
+    const finalRole = role || 'PATIENT';
+
+    const res = await fetch(`${API_BASE_URL}/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idToken: `google_web_mock_token_${Date.now()}`,
+        email: mockEmail,
+        fullName: mockName,
+        role: finalRole
+      })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || 'Google login failed.');
+    }
+
+    const data = await res.json();
+    
+    localStorage.setItem('medplus_token', data.token);
+    localStorage.setItem('medplus_uid', data.uid);
+    setToken(data.token);
+    
+    const loggedUser: User = {
+      uid: data.uid,
+      fullName: data.fullName,
+      email: data.email,
+      phone: data.phone || '',
+      role: data.role as UserRole,
+      profileImage: data.profileImage || ''
+    };
+    
+    setUser(loggedUser);
+    return loggedUser;
   };
 
   const logout = () => {

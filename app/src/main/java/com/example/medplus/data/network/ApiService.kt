@@ -12,6 +12,9 @@ interface ApiService {
     @POST("api/auth/login")
     fun loginUser(@Body request: LoginRequest): Call<LoginResponse>
 
+    @POST("api/auth/google")
+    fun loginWithGoogle(@Body request: GoogleLoginRequest): Call<LoginResponse>
+
     @GET("api/auth/profile/{uid}")
     fun getUserProfile(@Path("uid") uid: String): Call<UserResponse>
 
@@ -115,6 +118,13 @@ interface ApiService {
 }
 
 // Request and Response classes
+
+data class GoogleLoginRequest(
+    val idToken: String,
+    val email: String,
+    val fullName: String,
+    val role: String
+)
 
 data class RegisterRequest(
     val fullName: String,

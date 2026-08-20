@@ -439,7 +439,7 @@ class DashboardRepository {
             val activeAppt = if (!appointmentId.isNullOrEmpty()) {
                 patientAppts.find { it.id == appointmentId }
             } else {
-                patientAppts.find { it.status == "PENDING" || it.status == "ACTIVE" }
+                patientAppts.find { it.status == "PENDING" || it.status == "ACTIVE" || it.status == "UPCOMING" || it.status == "CONFIRMED" }
             } ?: return null
 
             val doctorId = activeAppt.doctorId

@@ -1,11 +1,13 @@
 package com.example.medplus.viewmodel
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.example.medplus.model.Appointment
 import com.example.medplus.repository.AppointmentRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -25,6 +27,15 @@ class DoctorAppointmentsViewModel : ViewModel() {
 
     init {
         loadAppointments()
+        observeAppointments()
+    }
+
+    private fun observeAppointments() {
+        viewModelScope.launch {
+            repository.getDoctorAppointmentsFlow().collect { list ->
+                _uiState.update { it.copy(appointments = list) }
+            }
+        }
     }
 
     fun loadAppointments() {

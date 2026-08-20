@@ -120,7 +120,7 @@ export const getUpcomingAppointment = async (): Promise<{
     status: data.status || 'PENDING',
     date: data.date || '',
     time: data.time || ''
-  })).filter((appt: any) => appt.status === 'PENDING' || appt.status === 'ACTIVE');
+  })).filter((appt: any) => appt.status === 'PENDING' || appt.status === 'ACTIVE' || appt.status === 'UPCOMING' || appt.status === 'CONFIRMED');
 
   if (appointments.length === 0) return null;
 
@@ -163,7 +163,7 @@ export const getLiveQueueTracking = async (appointmentId?: string): Promise<Live
   const appts = await apptsRes.json();
   const activeAppt = appointmentId 
     ? appts.find((a: any) => a.id === appointmentId)
-    : appts.find((a: any) => a.status === 'PENDING' || a.status === 'ACTIVE');
+    : appts.find((a: any) => a.status === 'PENDING' || a.status === 'ACTIVE' || a.status === 'UPCOMING' || a.status === 'CONFIRMED');
 
   if (!activeAppt) return null;
 

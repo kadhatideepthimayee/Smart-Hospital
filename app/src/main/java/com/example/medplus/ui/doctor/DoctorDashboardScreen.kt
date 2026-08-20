@@ -1009,7 +1009,7 @@ private fun DoctorAppointmentCard(
                     Text("Patient Details", style = MaterialTheme.typography.labelMedium)
                 }
                 
-                if (appointment.status == "UPCOMING") {
+                if (appointment.status == "UPCOMING" || appointment.status == "PENDING") {
                     Button(
                         onClick = onStart,
                         modifier = Modifier.weight(1f),

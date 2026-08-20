@@ -110,9 +110,7 @@ class AuthViewModel : ViewModel() {
                     
                     Log.d("GOOGLE_AUTH_DEBUG", "Google credential received")
                     
-                    val token = googleIdTokenCredential.idToken
-
-                    firebaseAuthWithGoogle(token, selectedRole, onSuccess, onFailure)
+                    firebaseAuthWithGoogle(googleIdTokenCredential, selectedRole, onSuccess, onFailure)
                 } else {
                     Log.e("GOOGLE_AUTH_DEBUG", "Unexpected credential type: ${credential.type}")
                     onFailure("Unexpected credential type")

@@ -47,7 +47,7 @@ class AuthRepository {
                 } else {
                     val errorMsg = response.errorBody()?.string() ?: "Registration failed."
                     Log.e("AUTH_DEBUG", "Registration failed: $errorMsg")
-                    onFailure(errorMsg)
+                    onFailure(parseErrorMessage(errorMsg))
                 }
             }
 
@@ -98,7 +98,7 @@ class AuthRepository {
                 } else {
                     val errorMsg = response.errorBody()?.string() ?: "Invalid email or password."
                     Log.e("AUTH_DEBUG", "Login failed: $errorMsg")
-                    onFailure("Invalid email or password.")
+                    onFailure(parseErrorMessage(errorMsg))
                 }
             }
 
@@ -128,16 +128,67 @@ class AuthRepository {
         sessionManager.clearSession()
     }
 
-    /**
-     * Google Sign-In helper method (Stubbed for local server)
-     */
     fun firebaseAuthWithGoogle(
         credential: Any,
         selectedRole: String,
         onSuccess: (String) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        onFailure("Google Sign-In is not supported on the local server. Please use standard email registration.")
+        Log.d("GOOGLE_AUTH_DEBUG", "firebaseAuthWithGoogle started with selectedRole: $selectedRole")
+        
+        val idToken: String
+        val email: String
+        val fullName: String
+
+        if (credential is com.google.android.libraries.identity.googleid.GoogleIdTokenCredential) {
+            idToken = credential.idToken
+            email = credential.id
+            fullName = credential.displayName ?: "Google User"
+        } else {
+            idToken = credential.toString()
+            email = "google_user_${System.currentTimeMillis() % 100000}@medplus.com"
+            fullName = "Google Test User"
+        }
+
+        Log.d("GOOGLE_AUTH_DEBUG", "Sending Google authentication request for $email as $selectedRole")
+
+        val request = GoogleLoginRequest(
+            idToken = idToken,
+            email = email,
+            fullName = fullName,
+            role = selectedRole.uppercase()
+        )
+
+        apiService.loginWithGoogle(request).enqueue(object : Callback<LoginResponse> {
+            override fun onResponse(call: Call<LoginResponse>, response: Response<LoginResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val role = body.role.trim().uppercase()
+
+                    sessionManager.saveSession(
+                        token = body.token,
+                        uid = body.uid,
+                        email = body.email,
+                        role = role,
+                        name = body.fullName,
+                        phone = body.phone,
+                        profileImage = body.profileImage
+                    )
+
+                    Log.d("GOOGLE_AUTH_DEBUG", "Google login SUCCESS | Role=$role")
+                    onSuccess(role)
+                } else {
+                    val errorMsg = response.errorBody()?.string() ?: "Google authentication failed."
+                    Log.e("GOOGLE_AUTH_DEBUG", "Google login failed: $errorMsg")
+                    onFailure(parseErrorMessage(errorMsg))
+                }
+            }
+
+            override fun onFailure(call: Call<LoginResponse>, t: Throwable) {
+                Log.e("GOOGLE_AUTH_DEBUG", "Network Google login failure", t)
+                onFailure(t.message ?: "Network error. Please try again.")
+            }
+        })
     }
 
     /**
@@ -165,5 +216,27 @@ class AuthRepository {
             profileImage = sessionManager.getProfileImage() ?: ""
         )
         onSuccess()
+    }
+
+    private fun parseErrorMessage(rawError: String): String {
+        try {
+            val jsonObject = org.json.JSONObject(rawError)
+            if (jsonObject.has("error")) {
+                val errorVal = jsonObject.getString("error")
+                if (errorVal.contains("auth/email-already-in-use")) {
+                    return "This email address is already in use. Please sign in."
+                }
+                if (errorVal.contains("auth/weak-password")) {
+                    return "Password is too weak. It should be at least 6 characters."
+                }
+                if (errorVal.contains("auth/invalid-email")) {
+                    return "Invalid email address format."
+                }
+                return errorVal.replace("Firebase: Error ", "").replace("(", "").replace(")", "").trim()
+            }
+        } catch (e: Exception) {
+            // fallback
+        }
+        return rawError
     }
 }

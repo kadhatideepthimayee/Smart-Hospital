@@ -235,6 +235,81 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.post('/api/auth/google', async (req, res) => {
+  const { idToken, email, fullName, role } = req.body;
+  if (!idToken) {
+    return res.status(400).json({ error: 'ID Token is required' });
+  }
+
+  const finalEmail = email || `google_user_${idToken.substring(0, 8)}@gmail.com`;
+  const finalName = fullName || `Google User ${idToken.substring(0, 4)}`;
+  const finalRole = (role || 'PATIENT').toUpperCase();
+
+  try {
+    const users = await queryCollectionHelper('users', [{ field: 'email', operator: '==', value: finalEmail }]);
+    let user;
+
+    if (users.length > 0) {
+      user = users[0];
+    } else {
+      const uid = `google_${crypto.randomUUID()}`;
+      const createdAt = new Date().toISOString();
+
+      user = {
+        uid,
+        fullName: finalName,
+        email: finalEmail,
+        phone: '',
+        role: finalRole,
+        profileImage: '',
+        status: 'ACTIVE',
+        createdAt
+      };
+
+      await setDocHelper('users', uid, user);
+
+      if (finalRole === 'DOCTOR') {
+        await setDocHelper('doctor_profiles', uid, {
+          uid,
+          fullName: finalName,
+          email: finalEmail,
+          phone: '',
+          verificationStatus: 'DRAFT',
+          submittedAt: createdAt
+        });
+      }
+
+      await addDocHelper('notifications', {
+        userId: uid,
+        title: 'Welcome to MedPlus via Google!',
+        message: `Hello ${finalName}, your account has been successfully created via Google Sign-In.`,
+        read: 0,
+        type: 'SYSTEM',
+        createdAt
+      });
+    }
+
+    const token = jwt.sign(
+      { uid: user.uid, email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      token,
+      uid: user.uid,
+      email: user.email,
+      role: user.role,
+      fullName: user.fullName,
+      phone: user.phone || '',
+      profileImage: user.profileImage || ''
+    });
+  } catch (error) {
+    console.error('Google login error:', error);
+    res.status(500).json({ error: 'Internal server error during Google auth' });
+  }
+});
+
 app.get('/api/auth/profile/:uid', async (req, res) => {
   try {
     const user = await getDocHelper('users', req.params.uid);
