@@ -1,15 +1,6 @@
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  addDoc, 
-  Timestamp 
-} from 'firebase/firestore';
-import { auth, db } from '../lib/firebase';
 import { DoctorFeedback } from '../types';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export const submitFeedback = async (feedbackData: {
   doctorId: string;
@@ -17,66 +8,43 @@ export const submitFeedback = async (feedbackData: {
   rating: number; // 1-5
   feedback?: string;
 }): Promise<DoctorFeedback> => {
-  const currentUid = auth.currentUser?.uid;
-  if (!currentUid) throw new Error('User not authenticated');
+  const currentUid = localStorage.getItem('medplus_uid');
+  const token = localStorage.getItem('medplus_token');
+  if (!currentUid || !token) throw new Error('User not authenticated');
 
-  const fbData = {
-    doctorId: feedbackData.doctorId,
-    patientId: currentUid,
-    rating: feedbackData.rating,
-    feedback: feedbackData.feedback || '',
-    appointmentId: feedbackData.appointmentId,
-    createdAt: Timestamp.now()
-  };
+  const res = await fetch(`${API_BASE_URL}/feedback`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      doctorId: feedbackData.doctorId,
+      patientId: currentUid,
+      rating: feedbackData.rating,
+      feedback: feedbackData.feedback || '',
+      appointmentId: feedbackData.appointmentId
+    })
+  });
 
-  const docRef = await addDoc(collection(db, 'feedback'), fbData);
-  return {
-    id: docRef.id,
-    ...fbData,
-    createdAt: new Date().toISOString()
-  };
+  if (!res.ok) {
+    const errData = await res.json();
+    throw new Error(errData.error || 'Failed to submit feedback.');
+  }
+
+  return await res.json();
 };
 
 export const getDoctorFeedback = async (doctorId: string): Promise<DoctorFeedback[]> => {
-  const q = query(collection(db, 'feedback'), where('doctorId', '==', doctorId));
-  const snapshot = await getDocs(q);
-
-  return snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      doctorId: data.doctorId || '',
-      patientId: data.patientId || '',
-      rating: data.rating || 5,
-      feedback: data.feedback || '',
-      appointmentId: data.appointmentId || '',
-      createdAt: data.createdAt ? new Date(data.createdAt.seconds * 1000).toISOString() : ''
-    };
-  });
+  const res = await fetch(`${API_BASE_URL}/feedback/doctor/${doctorId}`);
+  if (!res.ok) throw new Error('Failed to fetch doctor feedback.');
+  return await res.json();
 };
 
 export const getFeedbackForAppointment = async (
   appointmentId: string
 ): Promise<{ exists: boolean; feedback?: DoctorFeedback }> => {
-  const q = query(collection(db, 'feedback'), where('appointmentId', '==', appointmentId));
-  const snapshot = await getDocs(q);
-
-  if (snapshot.empty) {
-    return { exists: false };
-  }
-
-  const docSnap = snapshot.docs[0];
-  const data = docSnap.data();
-  return {
-    exists: true,
-    feedback: {
-      id: docSnap.id,
-      doctorId: data.doctorId || '',
-      patientId: data.patientId || '',
-      rating: data.rating || 5,
-      feedback: data.feedback || '',
-      appointmentId: data.appointmentId || '',
-      createdAt: data.createdAt ? new Date(data.createdAt.seconds * 1000).toISOString() : ''
-    }
-  };
+  const res = await fetch(`${API_BASE_URL}/feedback/appointment/${appointmentId}`);
+  if (!res.ok) throw new Error('Failed to check feedback for appointment.');
+  return await res.json();
 };

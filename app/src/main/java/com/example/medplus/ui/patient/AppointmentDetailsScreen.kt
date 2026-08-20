@@ -35,10 +35,10 @@ fun AppointmentDetailsScreen(
     onViewLiveQueueClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val firestore = remember { com.google.firebase.firestore.FirebaseFirestore.getInstance() }
     val dashboardRepo = remember { com.example.medplus.repository.DashboardRepository() }
     val scope = rememberCoroutineScope()
     val appointmentRepo = remember { AppointmentRepository() }
+    val doctorRepo = remember { com.example.medplus.repository.DoctorRepository() }
 
     var appointment by remember { mutableStateOf<Appointment?>(null) }
     var consultationFee by remember { mutableStateOf<Double?>(null) }
@@ -63,70 +63,59 @@ fun AppointmentDetailsScreen(
     fun loadData() {
         isLoading = true
         error = null
-        scope.launch {
-            try {
-                firestore.collection("appointments").document(appointmentId).get()
-                    .addOnSuccessListener { apptDoc ->
-                        val appt = apptDoc.toObject(Appointment::class.java)?.copy(appointmentId = apptDoc.id)
-                        if (appt != null) {
-                            appointment = appt
+        appointmentRepo.getAppointment(
+            appointmentId = appointmentId,
+            onSuccess = { appt ->
+                appointment = appt
 
-                            // Fetch Doctor Consultation Fee
-                            firestore.collection("doctor_profiles").document(appt.doctorId).get()
-                                .addOnSuccessListener { docProfileDoc ->
-                                    if (docProfileDoc.exists()) {
-                                        consultationFee = docProfileDoc.getDouble("consultationFee")
-                                    }
-                                }
+                // Fetch Doctor Consultation Fee
+                doctorRepo.getDoctorProfile(
+                    uid = appt.doctorId,
+                    onSuccess = { docProfile ->
+                        consultationFee = docProfile?.consultationFee
+                    },
+                    onFailure = { /* ignore or log */ }
+                )
 
-                            // Start live queue polling via flow
-                            queuePollingJob?.cancel()
-                            queuePollingJob = scope.launch {
-                                dashboardRepo.getLiveQueueUpdates(appointmentId).collect { liveQueue ->
-                                    if (liveQueue != null) {
-                                        isQueueActive = liveQueue.isActive
-                                        queueStatus = liveQueue.status
-                                        patientsAhead = liveQueue.patientsAhead
-                                        estimatedWaitMinutes = liveQueue.estimatedWaitMinutes
-                                    } else {
-                                        isQueueActive = false
-                                    }
-                                }
-                            }
-
-                            // Fetch if feedback already submitted
-                            firestore.collection("feedback")
-                                .whereEqualTo("appointmentId", appointmentId)
-                                .get()
-                                .addOnSuccessListener { fbSnap ->
-                                    val fbDoc = fbSnap.documents.firstOrNull()
-                                    if (fbDoc != null) {
-                                        hasSubmittedFeedback = true
-                                        existingRating = fbDoc.getLong("rating")?.toInt() ?: 0
-                                        existingFeedbackText = fbDoc.getString("feedback") ?: ""
-                                    } else {
-                                        hasSubmittedFeedback = false
-                                    }
-                                    isLoading = false
-                                }
-                                .addOnFailureListener {
-                                    hasSubmittedFeedback = false
-                                    isLoading = false
-                                }
+                // Start live queue polling via flow
+                queuePollingJob?.cancel()
+                queuePollingJob = scope.launch {
+                    dashboardRepo.getLiveQueueUpdates(appointmentId).collect { liveQueue ->
+                        if (liveQueue != null) {
+                            isQueueActive = liveQueue.isActive
+                            queueStatus = liveQueue.status
+                            patientsAhead = liveQueue.patientsAhead
+                            estimatedWaitMinutes = liveQueue.estimatedWaitMinutes
                         } else {
-                            error = "Failed to load appointment details"
-                            isLoading = false
+                            isQueueActive = false
                         }
                     }
-                    .addOnFailureListener { e ->
-                        error = e.message ?: "Failed to load appointment details"
+                }
+
+                // Fetch if feedback already submitted
+                appointmentRepo.getFeedbackForAppointment(
+                    appointmentId = appointmentId,
+                    onSuccess = { fbCheck ->
+                        if (fbCheck.exists && fbCheck.feedback != null) {
+                            hasSubmittedFeedback = true
+                            existingRating = fbCheck.feedback.rating
+                            existingFeedbackText = fbCheck.feedback.comment ?: ""
+                        } else {
+                            hasSubmittedFeedback = false
+                        }
+                        isLoading = false
+                    },
+                    onFailure = {
+                        hasSubmittedFeedback = false
                         isLoading = false
                     }
-            } catch (e: Exception) {
-                error = e.message ?: "Failed to load details"
+                )
+            },
+            onFailure = { err ->
+                error = err
                 isLoading = false
             }
-        }
+        )
     }
 
     LaunchedEffect(appointmentId) {
@@ -178,7 +167,7 @@ fun AppointmentDetailsScreen(
                 val status = appt.status.trim().uppercase()
 
                 val statusColor = when (status) {
-                    "CONFIRMED", "UPCOMING" -> Success
+                    "CONFIRMED", "UPCOMING", "PENDING" -> Success
                     "IN_PROGRESS" -> Warning
                     "COMPLETED" -> Primary
                     "CANCELLED" -> Error
@@ -514,7 +503,7 @@ fun AppointmentDetailsScreen(
                     }
 
                     // Cancel Appointment Button for patients (Only if Upcoming/Confirmed)
-                    if (isPatient && (status == "CONFIRMED" || status == "UPCOMING")) {
+                    if (isPatient && (status == "CONFIRMED" || status == "UPCOMING" || status == "PENDING")) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {

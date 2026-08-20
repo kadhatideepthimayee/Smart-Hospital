@@ -1,20 +1,36 @@
 package com.example.medplus.repository
 
+import android.content.Context
 import com.example.medplus.auth.model.User
-import com.google.firebase.firestore.FirebaseFirestore
+import com.example.medplus.data.network.*
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
 
 class UserRepository {
 
-    private val firestore: FirebaseFirestore get() = FirebaseFirestore.getInstance()
+    private val context = com.google.firebase.FirebaseApp.getInstance().applicationContext
+    private val apiService: ApiService get() = RetrofitClient.getClient(context)
 
     fun saveUser(
         user: User,
         onSuccess: () -> Unit,
         onFailure: (Exception) -> Unit
     ) {
-        firestore.collection("users").document(user.uid).set(user)
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { onFailure(it) }
+        val request = UpdateProfileRequest(fullName = user.fullName, phone = user.phone, profileImage = user.profileImage)
+        apiService.updateUserProfile(user.uid, request).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) {
+                    onSuccess()
+                } else {
+                    onFailure(Exception(response.errorBody()?.string() ?: "Failed to save user profile"))
+                }
+            }
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(Exception(t.message ?: "Network error", t))
+            }
+        })
     }
 
     fun getUser(
@@ -22,15 +38,29 @@ class UserRepository {
         onSuccess: (User?) -> Unit,
         onFailure: (Exception) -> Unit
     ) {
-        firestore.collection("users").document(uid).get()
-            .addOnSuccessListener { document ->
-                if (document.exists()) {
-                    onSuccess(document.toObject(User::class.java))
+        apiService.getUserProfile(uid).enqueue(object : Callback<UserResponse> {
+            override fun onResponse(call: Call<UserResponse>, response: Response<UserResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val user = User(
+                        uid = body.uid,
+                        fullName = body.fullName,
+                        email = body.email,
+                        phone = body.phone,
+                        role = body.role,
+                        profileImage = body.profileImage ?: "",
+                        status = body.status ?: "ACTIVE"
+                    )
+                    onSuccess(user)
                 } else {
                     onSuccess(null)
                 }
             }
-            .addOnFailureListener { onFailure(it) }
+
+            override fun onFailure(call: Call<UserResponse>, t: Throwable) {
+                onFailure(Exception(t.message ?: "Network error", t))
+            }
+        })
     }
 
     fun getUserRole(
@@ -38,11 +68,11 @@ class UserRepository {
         onSuccess: (String?) -> Unit,
         onFailure: (Exception) -> Unit
     ) {
-        firestore.collection("users").document(uid).get()
-            .addOnSuccessListener { document ->
-                onSuccess(document.getString("role"))
-            }
-            .addOnFailureListener { onFailure(it) }
+        getUser(uid, { user ->
+            onSuccess(user?.role)
+        }, {
+            onFailure(it)
+        })
     }
 
     fun getUsersByRole(
@@ -50,15 +80,58 @@ class UserRepository {
         onSuccess: (List<User>) -> Unit,
         onFailure: (Exception) -> Unit
     ) {
-        firestore.collection("users")
-            .whereEqualTo("role", role)
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                val users = querySnapshot.documents.mapNotNull { doc ->
-                    doc.toObject(User::class.java)
+        if (role.uppercase() == "PATIENT") {
+            apiService.getAdminPatients().enqueue(object : Callback<List<UserResponse>> {
+                override fun onResponse(call: Call<List<UserResponse>>, response: Response<List<UserResponse>>) {
+                    if (response.isSuccessful && response.body() != null) {
+                        val list = response.body()!!.map { body ->
+                            User(
+                                uid = body.uid,
+                                fullName = body.fullName,
+                                email = body.email,
+                                phone = body.phone,
+                                role = body.role,
+                                profileImage = body.profileImage ?: "",
+                                status = body.status ?: "ACTIVE"
+                            )
+                        }
+                        onSuccess(list)
+                    } else {
+                        onSuccess(emptyList())
+                    }
                 }
-                onSuccess(users)
-            }
-            .addOnFailureListener { onFailure(it) }
+
+                override fun onFailure(call: Call<List<UserResponse>>, t: Throwable) {
+                    onFailure(Exception(t.message ?: "Network error", t))
+                }
+            })
+        } else if (role.uppercase() == "DOCTOR") {
+            apiService.getDoctors().enqueue(object : Callback<List<DoctorProfileResponse>> {
+                override fun onResponse(call: Call<List<DoctorProfileResponse>>, response: Response<List<DoctorProfileResponse>>) {
+                    if (response.isSuccessful && response.body() != null) {
+                        val list = response.body()!!.map { body ->
+                            User(
+                                uid = body.uid,
+                                fullName = body.fullName,
+                                email = body.email,
+                                phone = body.phone ?: "",
+                                role = "DOCTOR",
+                                profileImage = body.profileImage ?: "",
+                                status = body.verificationStatus ?: "PENDING"
+                            )
+                        }
+                        onSuccess(list)
+                    } else {
+                        onSuccess(emptyList())
+                    }
+                }
+
+                override fun onFailure(call: Call<List<DoctorProfileResponse>>, t: Throwable) {
+                    onFailure(Exception(t.message ?: "Network error", t))
+                }
+            })
+        } else {
+            onSuccess(emptyList())
+        }
     }
 }

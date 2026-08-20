@@ -74,6 +74,7 @@ fun DoctorAvailabilityScreen(
         if (uiState.isUpdateSuccess) {
             android.widget.Toast.makeText(context, "Availability updated successfully", android.widget.Toast.LENGTH_SHORT).show()
             viewModel.clearMessages()
+            onBackClick()
         }
     }
 

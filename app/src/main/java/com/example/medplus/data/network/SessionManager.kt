@@ -3,7 +3,7 @@ package com.example.medplus.data.network
 import android.content.Context
 import android.content.SharedPreferences
 
-class SessionManager(context: Context) {
+class SessionManager(private val context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("medplus_session", Context.MODE_PRIVATE)
 
     companion object {
@@ -41,7 +41,11 @@ class SessionManager(context: Context) {
     }
 
     fun getApiUrl(): String {
-        return prefs.getString(KEY_API_URL, null) ?: getDefaultApiUrl()
+        val saved = prefs.getString(KEY_API_URL, null)
+        if (saved != null && (saved.contains("127.0.0.1") || saved.contains("localhost"))) {
+            return getDefaultApiUrl()
+        }
+        return saved ?: getDefaultApiUrl()
     }
 
     fun saveApiUrl(url: String) {
@@ -51,10 +55,15 @@ class SessionManager(context: Context) {
     }
 
     private fun getDefaultApiUrl(): String {
-        return if (isEmulator()) {
+        return try {
+            val resId = context.resources.getIdentifier("default_api_url", "string", context.packageName)
+            if (resId != 0) {
+                context.getString(resId)
+            } else {
+                "http://10.0.2.2:5000/"
+            }
+        } catch (e: Exception) {
             "http://10.0.2.2:5000/"
-        } else {
-            "http://127.0.0.1:5000/"
         }
     }
 

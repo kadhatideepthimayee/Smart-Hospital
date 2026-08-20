@@ -45,6 +45,7 @@ class DoctorDashboardViewModel : ViewModel() {
     private val dashboardRepository = DashboardRepository()
     private val appointmentRepository = AppointmentRepository()
     private val auth = FirebaseAuth.getInstance()
+    private val sessionManager = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext)
 
     private val _uiState = MutableStateFlow(DoctorDashboardUiState())
     val uiState = _uiState.asStateFlow()
@@ -95,12 +96,12 @@ class DoctorDashboardViewModel : ViewModel() {
                 
                 val todayAppointments = appointments.filter { it.date == todayStr }.sortedBy { it.timestamp?.seconds ?: 0L }
                 val todayCount = todayAppointments.size
-                val pendingCount = appointments.count { it.status.trim().uppercase() == "UPCOMING" }
+                val pendingCount = appointments.count { it.status.trim().uppercase() != "COMPLETED" && it.status.trim().uppercase() != "CANCELLED" }
                 val completedCount = appointments.count { it.status.trim().uppercase() == "COMPLETED" }
                 
                 // Find Next Appointment (nearest future appointment)
                 val nextAppointment = appointments
-                    .filter { it.status.trim().uppercase() == "UPCOMING" }
+                    .filter { it.status.trim().uppercase() != "COMPLETED" && it.status.trim().uppercase() != "CANCELLED" }
                     .sortedBy { it.timestamp?.seconds ?: 0L }
                     .firstOrNull()
 
@@ -117,7 +118,7 @@ class DoctorDashboardViewModel : ViewModel() {
     }
 
     fun loadDashboardData() {
-        val uid = auth.currentUser?.uid ?: return
+        val uid = sessionManager.getUserId() ?: return
         
         android.util.Log.d("DOCTOR_APPOINTMENT_DEBUG", "Doctor UID: $uid")
         android.util.Log.d("DOCTOR_APPOINTMENT_DEBUG", "Loading appointments")
@@ -161,55 +162,26 @@ class DoctorDashboardViewModel : ViewModel() {
     }
 
     fun startConsultation(queueItem: QueueItem) {
-        val doctorId = auth.currentUser?.uid ?: return
+        val doctorId = sessionManager.getUserId() ?: return
         val appointmentId = queueItem.appointmentId
         android.util.Log.d("DOCTOR_CONSULTATION_DEBUG", "Starting consultation: appointmentId=$appointmentId")
         _uiState.update { it.copy(actionLoading = true) }
 
-        val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
         if (queueItem.queueId.isEmpty()) {
-            firestore.collection("queue")
-                .whereEqualTo("appointmentId", appointmentId)
-                .get()
-                .addOnSuccessListener { querySnapshot ->
-                    val docs = querySnapshot.documents
-                    if (docs.isNotEmpty()) {
-                        val realQueueId = docs[0].id
-                        performStartConsultation(realQueueId, doctorId, appointmentId)
+            repository.getDoctorQueue(
+                date = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.ENGLISH)),
+                onSuccess = { queueList ->
+                    val matchingItem = queueList.find { it.appointmentId == appointmentId }
+                    if (matchingItem != null) {
+                        performStartConsultation(matchingItem.queueId, doctorId, appointmentId)
                     } else {
-                        // Create a new queue item if it doesn't exist
-                        val queueRef = firestore.collection("queue").document()
-                        val newQueueItem = QueueItem(
-                            queueId = queueRef.id,
-                            appointmentId = appointmentId,
-                            doctorId = doctorId,
-                            patientId = queueItem.patientId.ifEmpty { _uiState.value.todayAppointments.find { it.appointmentId == appointmentId }?.patientId ?: "" },
-                            patientName = queueItem.patientName,
-                            tokenNumber = queueItem.tokenNumber,
-                            status = "IN_PROGRESS",
-                            isActive = true,
-                            date = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.ENGLISH))
-                        )
-                        queueRef.set(newQueueItem)
-                            .addOnSuccessListener {
-                                appointmentRepository.updateAppointmentStatus(appointmentId, doctorId, "IN_PROGRESS",
-                                    onSuccess = {
-                                        _uiState.update { it.copy(actionLoading = false) }
-                                        loadDashboardData()
-                                    },
-                                    onFailure = { error ->
-                                        _uiState.update { it.copy(actionLoading = false, errorMessage = error) }
-                                    }
-                                )
-                            }
-                            .addOnFailureListener { e ->
-                                _uiState.update { it.copy(actionLoading = false, errorMessage = e.message ?: "Failed to initialize queue") }
-                            }
+                        _uiState.update { it.copy(actionLoading = false, errorMessage = "Queue item not found for this appointment.") }
                     }
+                },
+                onFailure = { error ->
+                    _uiState.update { it.copy(actionLoading = false, errorMessage = error) }
                 }
-                .addOnFailureListener { e ->
-                    _uiState.update { it.copy(actionLoading = false, errorMessage = e.message ?: "Failed to resolve queue item") }
-                }
+            )
         } else {
             performStartConsultation(queueItem.queueId, doctorId, appointmentId)
         }
@@ -244,7 +216,7 @@ class DoctorDashboardViewModel : ViewModel() {
         notes: String,
         followUpDate: String
     ) {
-        val doctorId = auth.currentUser?.uid ?: return
+        val doctorId = sessionManager.getUserId() ?: return
         val appointmentId = queueItem.appointmentId
         android.util.Log.d("DOCTOR_CONSULTATION_DEBUG", "Completing consultation: appointmentId=$appointmentId")
         _uiState.update { it.copy(actionLoading = true) }
@@ -258,15 +230,13 @@ class DoctorDashboardViewModel : ViewModel() {
             notes = notes,
             followUpDate = followUpDate,
             onSuccess = {
-                val firestore = com.google.firebase.firestore.FirebaseFirestore.getInstance()
                 if (queueItem.queueId.isEmpty()) {
-                    firestore.collection("queue")
-                        .whereEqualTo("appointmentId", appointmentId)
-                        .get()
-                        .addOnSuccessListener { querySnapshot ->
-                            val docs = querySnapshot.documents
-                            if (docs.isNotEmpty()) {
-                                performCompleteConsultation(docs[0].id, doctorId, appointmentId)
+                    repository.getDoctorQueue(
+                        date = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", java.util.Locale.ENGLISH)),
+                        onSuccess = { queueList ->
+                            val matchingItem = queueList.find { it.appointmentId == appointmentId }
+                            if (matchingItem != null) {
+                                performCompleteConsultation(matchingItem.queueId, doctorId, appointmentId)
                             } else {
                                 appointmentRepository.updateAppointmentStatus(appointmentId, doctorId, "COMPLETED",
                                     onSuccess = {
@@ -278,10 +248,11 @@ class DoctorDashboardViewModel : ViewModel() {
                                     }
                                 )
                             }
+                        },
+                        onFailure = { error ->
+                            _uiState.update { it.copy(actionLoading = false, errorMessage = error) }
                         }
-                        .addOnFailureListener { e ->
-                            _uiState.update { it.copy(actionLoading = false, errorMessage = e.message ?: "Failed to resolve queue item") }
-                        }
+                    )
                 } else {
                     performCompleteConsultation(queueItem.queueId, doctorId, appointmentId)
                 }

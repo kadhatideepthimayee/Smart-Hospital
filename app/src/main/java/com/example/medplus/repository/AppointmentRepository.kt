@@ -1,18 +1,22 @@
 package com.example.medplus.repository
 
+import android.content.Context
 import com.example.medplus.model.Appointment
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
+import com.example.medplus.data.network.*
+import com.google.firebase.Timestamp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
 
-/**
- * Repository to handle appointment-related data operations in Firestore.
- */
 class AppointmentRepository {
 
-    private val firestore: FirebaseFirestore get() = FirebaseFirestore.getInstance()
+    private val context = com.google.firebase.FirebaseApp.getInstance().applicationContext
+    private val sessionManager = SessionManager.getInstance(context)
+    private val apiService: ApiService get() = RetrofitClient.getClient(context)
 
     /**
      * Fetches all appointments for the currently authenticated patient.
@@ -21,24 +25,40 @@ class AppointmentRepository {
         onSuccess: (List<Appointment>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        firestore.collection("appointments")
-            .whereEqualTo("patientId", currentUid)
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                val appointments = querySnapshot.documents.mapNotNull { doc ->
-                    doc.toObject(Appointment::class.java)?.copy(appointmentId = doc.id)
+        apiService.getPatientAppointments(currentUid).enqueue(object : Callback<List<AppointmentResponse>> {
+            override fun onResponse(call: Call<List<AppointmentResponse>>, response: Response<List<AppointmentResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!.map { body ->
+                        Appointment(
+                            appointmentId = body.id,
+                            patientId = body.patientId,
+                            patientName = body.patientName,
+                            doctorId = body.doctorId,
+                            doctorName = body.doctorName,
+                            department = body.department,
+                            date = body.date,
+                            time = body.time,
+                            status = body.status,
+                            tokenNumber = body.tokenNumber,
+                            createdAt = Timestamp.now()
+                        )
+                    }
+                    onSuccess(list)
+                } else {
+                    onSuccess(emptyList())
                 }
-                onSuccess(appointments)
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch patient appointments")
+
+            override fun onFailure(call: Call<List<AppointmentResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching appointments")
             }
+        })
     }
 
     /**
@@ -49,12 +69,17 @@ class AppointmentRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("appointments").document(appointmentId)
-            .update("status", "CANCELLED")
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to cancel appointment")
+        val request = StatusRequest("CANCELLED")
+        apiService.updateAppointmentStatus(appointmentId, request).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to cancel appointment")
             }
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error cancelling appointment")
+            }
+        })
     }
 
     /**
@@ -64,24 +89,40 @@ class AppointmentRepository {
         onSuccess: (List<Appointment>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        firestore.collection("appointments")
-            .whereEqualTo("doctorId", currentUid)
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                val appointments = querySnapshot.documents.mapNotNull { doc ->
-                    doc.toObject(Appointment::class.java)?.copy(appointmentId = doc.id)
+        apiService.getDoctorAppointments(currentUid).enqueue(object : Callback<List<AppointmentResponse>> {
+            override fun onResponse(call: Call<List<AppointmentResponse>>, response: Response<List<AppointmentResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!.map { body ->
+                        Appointment(
+                            appointmentId = body.id,
+                            patientId = body.patientId,
+                            patientName = body.patientName,
+                            doctorId = body.doctorId,
+                            doctorName = body.doctorName,
+                            department = body.department,
+                            date = body.date,
+                            time = body.time,
+                            status = body.status,
+                            tokenNumber = body.tokenNumber,
+                            createdAt = Timestamp.now()
+                        )
+                    }
+                    onSuccess(list)
+                } else {
+                    onSuccess(emptyList())
                 }
-                onSuccess(appointments)
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch doctor appointments")
+
+            override fun onFailure(call: Call<List<AppointmentResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching doctor appointments")
             }
+        })
     }
 
     fun updateAppointmentStatus(
@@ -91,41 +132,107 @@ class AppointmentRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("appointments").document(appointmentId)
-            .update("status", newStatus)
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to update appointment status")
+        val request = StatusRequest(newStatus)
+        apiService.updateAppointmentStatus(appointmentId, request).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to update appointment status")
             }
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error updating status")
+            }
+        })
+    }
+
+    private fun fetchDoctorAppointmentsSync(): List<Appointment> {
+        val currentUid = sessionManager.getUserId() ?: ""
+        if (currentUid.isEmpty()) return emptyList()
+        return try {
+            val response = apiService.getDoctorAppointments(currentUid).execute()
+            if (response.isSuccessful && response.body() != null) {
+                response.body()!!.map { body ->
+                    Appointment(
+                        appointmentId = body.id,
+                        patientId = body.patientId,
+                        patientName = body.patientName,
+                        doctorId = body.doctorId,
+                        doctorName = body.doctorName,
+                        department = body.department,
+                        date = body.date,
+                        time = body.time,
+                        status = body.status,
+                        tokenNumber = body.tokenNumber,
+                        createdAt = Timestamp.now()
+                    )
+                }
+            } else emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     /**
      * Observes all appointments for the currently authenticated doctor in real-time.
      */
-    fun getDoctorAppointmentsFlow(): Flow<List<Appointment>> = callbackFlow {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-        if (currentUid.isEmpty()) {
-            trySend(emptyList())
-            close()
-            return@callbackFlow
+    fun getDoctorAppointmentsFlow(): Flow<List<Appointment>> = flow {
+        while (true) {
+            emit(fetchDoctorAppointmentsSync())
+            delay(5000)
         }
+    }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
-        val registration = firestore.collection("appointments")
-            .whereEqualTo("doctorId", currentUid)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    return@addSnapshotListener
-                }
-                if (snapshot != null) {
-                    val list = snapshot.documents.mapNotNull { doc ->
-                        doc.toObject(Appointment::class.java)?.copy(appointmentId = doc.id)
-                    }
-                    trySend(list)
+    fun getAppointment(
+        appointmentId: String,
+        onSuccess: (Appointment) -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        apiService.getAppointmentDetails(appointmentId).enqueue(object : Callback<AppointmentResponse> {
+            override fun onResponse(call: Call<AppointmentResponse>, response: Response<AppointmentResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val appt = Appointment(
+                        appointmentId = body.id,
+                        patientId = body.patientId,
+                        patientName = body.patientName,
+                        doctorId = body.doctorId,
+                        doctorName = body.doctorName,
+                        department = body.department,
+                        date = body.date,
+                        time = body.time,
+                        status = body.status,
+                        tokenNumber = body.tokenNumber,
+                        createdAt = Timestamp.now()
+                    )
+                    onSuccess(appt)
+                } else {
+                    onFailure("Failed to get appointment details")
                 }
             }
 
-        awaitClose {
-            registration.remove()
-        }
+            override fun onFailure(call: Call<AppointmentResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching appointment details")
+            }
+        })
+    }
+
+    fun getFeedbackForAppointment(
+        appointmentId: String,
+        onSuccess: (FeedbackCheckResponse) -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        apiService.getFeedbackForAppointment(appointmentId).enqueue(object : Callback<FeedbackCheckResponse> {
+            override fun onResponse(call: Call<FeedbackCheckResponse>, response: Response<FeedbackCheckResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    onSuccess(response.body()!!)
+                } else {
+                    onFailure("Failed to check feedback status")
+                }
+            }
+
+            override fun onFailure(call: Call<FeedbackCheckResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error checking feedback status")
+            }
+        })
     }
 }

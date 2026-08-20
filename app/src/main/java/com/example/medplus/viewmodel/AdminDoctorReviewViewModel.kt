@@ -48,7 +48,7 @@ class AdminDoctorReviewViewModel : ViewModel() {
     }
 
     private fun performAction(uid: String, status: String, reason: String?) {
-        val adminUid = auth.currentUser?.uid ?: return
+        val adminUid = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId() ?: return
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         adminRepository.updateDoctorVerificationStatus(
             uid = uid,

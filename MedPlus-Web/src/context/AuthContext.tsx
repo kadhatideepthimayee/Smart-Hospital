@@ -1,15 +1,4 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import { 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  signOut, 
-  onAuthStateChanged,
-  signInWithCredential,
-  signInWithPopup,
-  GoogleAuthProvider
-} from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '../lib/firebase';
 import { User, UserRole } from '../types';
 
 interface AuthContextType {
@@ -25,82 +14,79 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Use Firebase onAuthStateChanged listener to automatically fetch user profile
+  // Load user profile on app startup if token and uid are in local storage
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
+    const loadStoredUser = async () => {
+      const storedToken = localStorage.getItem('medplus_token');
+      const storedUid = localStorage.getItem('medplus_uid');
+      
+      if (storedToken && storedUid) {
         try {
-          const userDocRef = doc(db, 'users', firebaseUser.uid);
-          const userDoc = await getDoc(userDocRef);
-          
-          if (userDoc.exists()) {
-            const userData = userDoc.data();
-            const profileUser = {
-              uid: firebaseUser.uid,
-              fullName: userData.fullName || '',
-              email: userData.email || firebaseUser.email || '',
-              phone: userData.phone || '',
-              role: (userData.role || 'PATIENT') as UserRole,
+          const res = await fetch(`${API_BASE_URL}/auth/profile/${storedUid}`, {
+            headers: {
+              'Authorization': `Bearer ${storedToken}`
+            }
+          });
+          if (res.ok) {
+            const userData = await res.json();
+            setUser({
+              uid: userData.uid,
+              fullName: userData.fullName,
+              email: userData.email,
+              phone: userData.phone,
+              role: userData.role as UserRole,
               profileImage: userData.profileImage || ''
-            };
-            setUser(profileUser);
-            // Firebase Auth automatically handles tokens, but we keep token string in state for API compat
-            const idTokenResult = await firebaseUser.getIdToken();
-            setToken(idTokenResult);
-            localStorage.setItem('medplus_token', idTokenResult);
+            });
+            setToken(storedToken);
           } else {
-            setUser(null);
-            setToken(null);
+            // Token expired or invalid
             localStorage.removeItem('medplus_token');
+            localStorage.removeItem('medplus_uid');
           }
         } catch (err) {
-          console.error('Error fetching user profile from Firestore', err);
-          setUser(null);
-          setToken(null);
-          localStorage.removeItem('medplus_token');
+          console.error('Error fetching stored profile from local backend:', err);
         }
-      } else {
-        setUser(null);
-        setToken(null);
-        localStorage.removeItem('medplus_token');
       }
       setLoading(false);
-    });
+    };
 
-    return () => unsubscribe();
+    loadStoredUser();
   }, []);
 
   const login = async (email: string, password: string): Promise<User> => {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const firebaseUser = userCredential.user;
-    
-    const userDocRef = doc(db, 'users', firebaseUser.uid);
-    const userDoc = await getDoc(userDocRef);
-    
-    if (!userDoc.exists()) {
-      throw new Error('User profile data not found in database.');
+    const res = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || 'Login failed.');
     }
-    
-    const userData = userDoc.data();
+
+    const data = await res.json();
     const profileUser: User = {
-      uid: firebaseUser.uid,
-      fullName: userData.fullName || '',
-      email: userData.email || firebaseUser.email || '',
-      phone: userData.phone || '',
-      role: (userData.role || 'PATIENT') as UserRole,
-      profileImage: userData.profileImage || ''
+      uid: data.uid,
+      fullName: data.fullName,
+      email: data.email,
+      phone: data.phone,
+      role: data.role as UserRole,
+      profileImage: data.profileImage || ''
     };
 
-    const idToken = await firebaseUser.getIdToken();
-    setToken(idToken);
-    localStorage.setItem('medplus_token', idToken);
+    setToken(data.token);
     setUser(profileUser);
-    
+    localStorage.setItem('medplus_token', data.token);
+    localStorage.setItem('medplus_uid', data.uid);
+
     return profileUser;
   };
 
@@ -111,90 +97,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     password: string,
     role: UserRole
   ): Promise<User> => {
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const firebaseUser = userCredential.user;
-    
-    const profileUser: User = {
-      uid: firebaseUser.uid,
-      fullName,
-      email,
-      phone,
-      role,
-      profileImage: ''
-    };
-
-    // Save profile to Firestore
-    await setDoc(doc(db, 'users', firebaseUser.uid), {
-      uid: firebaseUser.uid,
-      fullName,
-      email,
-      phone,
-      role,
-      createdAt: serverTimestamp()
+    const res = await fetch(`${API_BASE_URL}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fullName, email, phone, password, role })
     });
 
-    const idToken = await firebaseUser.getIdToken();
-    setToken(idToken);
-    localStorage.setItem('medplus_token', idToken);
-    setUser(profileUser);
-    
-    return profileUser;
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || 'Registration failed.');
+    }
+
+    // Auto-login after successful registration
+    return await login(email, password);
   };
 
   const googleSignIn = async (role?: UserRole): Promise<User> => {
-    const provider = new GoogleAuthProvider();
-    const userCredential = await signInWithPopup(auth, provider);
-    const firebaseUser = userCredential.user;
-
-    const userDocRef = doc(db, 'users', firebaseUser.uid);
-    const userDoc = await getDoc(userDocRef);
-
-    let profileUser: User;
-
-    if (userDoc.exists()) {
-      const userData = userDoc.data();
-      profileUser = {
-        uid: firebaseUser.uid,
-        fullName: userData.fullName || firebaseUser.displayName || 'Google User',
-        email: userData.email || firebaseUser.email || '',
-        phone: userData.phone || '',
-        role: (userData.role || 'PATIENT') as UserRole,
-        profileImage: userData.profileImage || firebaseUser.photoURL || ''
-      };
-    } else {
-      // First time Google sign-in, save profile
-      const selectedRole = role || 'PATIENT';
-      profileUser = {
-        uid: firebaseUser.uid,
-        fullName: firebaseUser.displayName || 'Google User',
-        email: firebaseUser.email || '',
-        phone: '',
-        role: selectedRole,
-        profileImage: firebaseUser.photoURL || ''
-      };
-
-      await setDoc(userDocRef, {
-        uid: firebaseUser.uid,
-        fullName: profileUser.fullName,
-        email: profileUser.email,
-        phone: '',
-        role: selectedRole,
-        profileImage: profileUser.profileImage,
-        createdAt: serverTimestamp()
-      });
-    }
-
-    const newIdToken = await firebaseUser.getIdToken();
-    setToken(newIdToken);
-    localStorage.setItem('medplus_token', newIdToken);
-    setUser(profileUser);
-    
-    return profileUser;
+    throw new Error('Google Sign-In is not supported on the local server. Please use standard email registration.');
   };
 
-  const logout = async () => {
-    await signOut(auth);
+  const logout = () => {
     localStorage.removeItem('medplus_token');
+    localStorage.removeItem('medplus_uid');
     setToken(null);
     setUser(null);
   };

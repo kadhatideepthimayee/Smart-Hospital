@@ -1,21 +1,5 @@
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  orderBy, 
-  limit, 
-  updateDoc, 
-  deleteDoc, 
-  addDoc, 
-  writeBatch,
-  serverTimestamp,
-  Timestamp 
-} from 'firebase/firestore';
-import { auth, db } from '../lib/firebase';
-import { Notification, Activity } from '../types';
+import { Notification, Activity, UserRole } from '../types';
+import { getDoctorProfileByUid } from './doctors';
 
 export interface LiveQueueData {
   isActive: boolean;
@@ -27,6 +11,8 @@ export interface LiveQueueData {
   crowdLevel: 'LOW' | 'MEDIUM' | 'HIGH';
   department: string;
 }
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 const timeToMinutes = (timeStr: string) => {
   if (!timeStr) return 0;
@@ -44,86 +30,71 @@ const timeToMinutes = (timeStr: string) => {
 };
 
 export const getNotifications = async (): Promise<Notification[]> => {
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = localStorage.getItem('medplus_uid');
   if (!currentUid) return [];
 
-  const q = query(
-    collection(db, 'notifications'), 
-    where('userId', '==', currentUid)
-  );
-  
-  const snapshot = await getDocs(q);
-  const list = snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      userId: data.userId || '',
-      title: data.title || '',
-      message: data.message || '',
-      type: data.type || 'GENERAL',
-      isRead: data.isRead !== undefined ? data.isRead : (data.read || false),
-      timestamp: data.timestamp ? new Date(data.timestamp.seconds * 1000).toLocaleString() : ''
-    };
-  });
-  
-  // Sort descending by timestamp locally
-  return list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-};
+  const res = await fetch(`${API_BASE_URL}/notifications/${currentUid}`);
+  if (!res.ok) throw new Error('Failed to fetch notifications.');
+  const list = await res.json();
 
-export const getUnreadNotificationsCount = async (): Promise<{ count: number }> => {
-  const currentUid = auth.currentUser?.uid;
-  if (!currentUid) return { count: 0 };
-
-  const snapshot = await getDocs(
-    query(
-      collection(db, 'notifications'), 
-      where('userId', '==', currentUid), 
-      where('isRead', '==', false)
-    )
-  );
-  return { count: snapshot.size };
-};
-
-export const markNotificationAsRead = async (id: string): Promise<Notification> => {
-  const docRef = doc(db, 'notifications', id);
-  await updateDoc(docRef, { isRead: true, read: true });
-
-  const updatedSnap = await getDoc(docRef);
-  const data = updatedSnap.data() || {};
-  return {
-    id,
+  return list.map((data: any) => ({
+    id: data.id,
     userId: data.userId || '',
     title: data.title || '',
     message: data.message || '',
     type: data.type || 'GENERAL',
-    isRead: true,
-    timestamp: data.timestamp ? new Date(data.timestamp.seconds * 1000).toLocaleString() : ''
-  };
+    isRead: data.read === 1,
+    timestamp: data.createdAt ? new Date(data.createdAt).toLocaleString() : ''
+  }));
+};
+
+export const getUnreadNotificationsCount = async (): Promise<{ count: number }> => {
+  const list = await getNotifications();
+  const unread = list.filter(n => !n.isRead);
+  return { count: unread.length };
+};
+
+export const markNotificationAsRead = async (id: string): Promise<Notification> => {
+  const token = localStorage.getItem('medplus_token');
+  const res = await fetch(`${API_BASE_URL}/notifications/${id}/read`, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+
+  if (!res.ok) throw new Error('Failed to mark notification as read');
+
+  // Fetch updated notification or get it from list
+  const list = await getNotifications();
+  const updated = list.find(n => n.id === id);
+  if (!updated) throw new Error('Notification not found');
+  return updated;
 };
 
 export const markAllNotificationsAsRead = async (): Promise<{ msg: string }> => {
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = localStorage.getItem('medplus_uid');
   if (!currentUid) return { msg: 'User not authenticated' };
 
-  const snapshot = await getDocs(
-    query(
-      collection(db, 'notifications'), 
-      where('userId', '==', currentUid), 
-      where('isRead', '==', false)
-    )
-  );
-
-  const batch = writeBatch(db);
-  snapshot.docs.forEach(docSnap => {
-    batch.update(docSnap.ref, { isRead: true, read: true });
-  });
-  await batch.commit();
+  const list = await getNotifications();
+  const unread = list.filter(n => !n.isRead);
+  
+  const token = localStorage.getItem('medplus_token');
+  // Loop and mark as read locally
+  for (const n of unread) {
+    await fetch(`${API_BASE_URL}/notifications/${n.id}/read`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+  }
 
   return { msg: 'All notifications marked as read' };
 };
 
 export const deleteNotification = async (id: string): Promise<{ msg: string }> => {
-  await deleteDoc(doc(db, 'notifications', id));
+  const token = localStorage.getItem('medplus_token');
+  await fetch(`${API_BASE_URL}/notifications/${id}`, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
   return { msg: 'Notification deleted' };
 };
 
@@ -135,32 +106,26 @@ export const getUpcomingAppointment = async (): Promise<{
   date: string;
   time: string;
 } | null> => {
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = localStorage.getItem('medplus_uid');
   if (!currentUid) return null;
 
-  const snapshot = await getDocs(
-    query(
-      collection(db, 'appointments'), 
-      where('patientId', '==', currentUid)
-    )
-  );
+  const res = await fetch(`${API_BASE_URL}/appointments/patient/${currentUid}`);
+  if (!res.ok) return null;
+  const list = await res.json();
 
-  const appointments = snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      appointmentId: docSnap.id,
-      doctorName: data.doctorName || '',
-      department: data.department || '',
-      status: data.status || 'UPCOMING',
-      date: data.date || '',
-      time: data.time || ''
-    };
-  }).filter(appt => appt.status === 'UPCOMING' || appt.status === 'IN_PROGRESS');
+  const appointments = list.map((data: any) => ({
+    appointmentId: data.id,
+    doctorName: data.doctorName || '',
+    department: data.department || '',
+    status: data.status || 'PENDING',
+    date: data.date || '',
+    time: data.time || ''
+  })).filter((appt: any) => appt.status === 'PENDING' || appt.status === 'ACTIVE');
 
   if (appointments.length === 0) return null;
 
   // Sort chronologically
-  appointments.sort((a, b) => {
+  appointments.sort((a: any, b: any) => {
     return (a.date + ' ' + a.time).localeCompare(b.date + ' ' + b.time);
   });
 
@@ -168,105 +133,65 @@ export const getUpcomingAppointment = async (): Promise<{
 };
 
 export const getLiveQueueTracking = async (appointmentId?: string): Promise<LiveQueueData | null> => {
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = localStorage.getItem('medplus_uid');
   if (!currentUid) return null;
 
   let activeQueueItem: any = null;
 
+  // 1. Fetch queue items
   if (appointmentId) {
-    const snapshot = await getDocs(
-      query(collection(db, 'queue'), where('appointmentId', '==', appointmentId))
-    );
-    if (!snapshot.empty) {
-      activeQueueItem = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+    const res = await fetch(`${API_BASE_URL}/queue?doctorId=${currentUid}`); // Fallback search
+    if (res.ok) {
+      const list = await res.json();
+      activeQueueItem = list.find((item: any) => item.appointmentId === appointmentId && item.isActive);
     }
   } else {
     // Find next upcoming appointment
     const upcomingAppt = await getUpcomingAppointment();
     if (upcomingAppt) {
-      const snapshot = await getDocs(
-        query(
-          collection(db, 'queue'), 
-          where('appointmentId', '==', upcomingAppt.appointmentId), 
-          where('isActive', '==', true)
-        )
-      );
-      if (!snapshot.empty) {
-        activeQueueItem = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
-      }
-    }
-
-    if (!activeQueueItem) {
-      const snapshot = await getDocs(
-        query(
-          collection(db, 'queue'), 
-          where('patientId', '==', currentUid), 
-          where('isActive', '==', true)
-        )
-      );
-      if (!snapshot.empty) {
-        activeQueueItem = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
-      }
+      const res = await fetch(`${API_BASE_URL}/queue?doctorId=${upcomingAppt.doctorName}`); // search via doctor
+      // Or search queue records for this patient
+      const patientQueueRes = await fetch(`${API_BASE_URL}/queue?doctorId=${currentUid}`); // Placeholder, we can query by doctor
     }
   }
 
+  // To make it extremely reliable and independent of complex query nesting,
+  // we can fetch the active queue by querying the doctor queue directly:
+  // Let's query appointments for this patient
+  const apptsRes = await fetch(`${API_BASE_URL}/appointments/patient/${currentUid}`);
+  if (!apptsRes.ok) return null;
+  const appts = await apptsRes.json();
+  const activeAppt = appointmentId 
+    ? appts.find((a: any) => a.id === appointmentId)
+    : appts.find((a: any) => a.status === 'PENDING' || a.status === 'ACTIVE');
+
+  if (!activeAppt) return null;
+
+  // Get the doctor queue list
+  const doctorId = activeAppt.doctorId;
+  const date = activeAppt.date;
+
+  const queueRes = await fetch(`${API_BASE_URL}/queue?doctorId=${doctorId}&date=${encodeURIComponent(date)}`);
+  if (!queueRes.ok) return null;
+  const doctorQueue = await queueRes.json();
+
+  activeQueueItem = doctorQueue.find((item: any) => item.appointmentId === activeAppt.id);
   if (!activeQueueItem) return null;
 
-  const doctorId = activeQueueItem.doctorId;
-  const date = activeQueueItem.date;
+  // Fetch doctor profile to get slotDuration & consultationStartTime
+  const doctorProfile = await getDoctorProfileByUid(doctorId);
+  const defaultSlotDuration = doctorProfile.slotDuration || 15;
+  const consultationStartTimeStr = doctorProfile.consultationStartTime || '09:00 AM';
 
-  // Fetch doctor profile
-  const doctorDoc = await getDoc(doc(db, 'doctor_profiles', doctorId));
-  const defaultSlotDuration = doctorDoc.exists() ? doctorDoc.data().slotDuration || 15 : 15;
-  const consultationStartTimeStr = doctorDoc.exists() ? doctorDoc.data().consultationStartTime || '09:00 AM' : '09:00 AM';
-
-  // Fetch all appointments for doctor on date
-  const apptsSnapshot = await getDocs(
-    query(
-      collection(db, 'appointments'), 
-      where('doctorId', '==', doctorId), 
-      where('date', '==', date)
-    )
-  );
-
-  const appointments = apptsSnapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      appointmentId: docSnap.id,
-      ...data,
-      time: data.time || '09:00 AM',
-      status: data.status || 'UPCOMING'
-    };
-  }).filter(appt => appt.status !== 'CANCELLED');
-
-  // Sort appointments
-  appointments.sort((a, b) => {
-    const timeDiff = timeToMinutes(a.time) - timeToMinutes(b.time);
-    if (timeDiff !== 0) return timeDiff;
-    const aCreated = a.createdAt?.seconds || 0;
-    const bCreated = b.createdAt?.seconds || 0;
-    return aCreated - bCreated;
+  // Sort and filter active appointments
+  const activeAppointments = appts.filter((a: any) => a.doctorId === doctorId && a.date === date && a.status !== 'CANCELLED');
+  activeAppointments.sort((a: any, b: any) => {
+    return timeToMinutes(a.time) - timeToMinutes(b.time);
   });
 
-  // Calculate average consultation duration
-  const completedAppts = appointments.filter(a => a.status === 'COMPLETED' && a.consultationStartedAt && a.consultationCompletedAt);
-  let slotDuration = defaultSlotDuration;
-  if (completedAppts.length > 0) {
-    let totalDuration = 0;
-    completedAppts.forEach(a => {
-      try {
-        const start = new Date(a.consultationStartedAt).getTime();
-        const end = new Date(a.consultationCompletedAt).getTime();
-        totalDuration += Math.floor((end - start) / 60000);
-      } catch (e) {}
-    });
-    slotDuration = Math.max(5, Math.round(totalDuration / completedAppts.length));
-  }
-
+  let timelineMin = timeToMinutes(consultationStartTimeStr);
   const now = new Date();
   const nowMin = now.getHours() * 60 + now.getMinutes();
-
-  let timelineMin = timeToMinutes(consultationStartTimeStr);
 
   let targetEstimatedWait = 0;
   let targetEstimatedDelay = 0;
@@ -274,46 +199,46 @@ export const getLiveQueueTracking = async (appointmentId?: string): Promise<Live
 
   // Determine current serving token
   let currentServingToken = "0";
-  const inProgressAppt = appointments.find(a => a.status === 'IN_PROGRESS');
+  const inProgressAppt = activeAppointments.find((a: any) => a.status === 'ACTIVE');
   if (inProgressAppt) {
     currentServingToken = inProgressAppt.tokenNumber || "0";
   } else {
-    const completedList = appointments.filter(a => a.status === 'COMPLETED');
+    const completedList = activeAppointments.filter((a: any) => a.status === 'COMPLETED');
     if (completedList.length > 0) {
       currentServingToken = completedList[completedList.length - 1].tokenNumber || "0";
     }
   }
 
-  for (let i = 0; i < appointments.length; i++) {
-    const appt = appointments[i];
+  for (let i = 0; i < activeAppointments.length; i++) {
+    const appt = activeAppointments[i];
     const scheduledStartMin = timeToMinutes(appt.time);
 
     let expectedStart = scheduledStartMin;
     if (appt.status === 'COMPLETED') {
       const startMin = scheduledStartMin;
-      const endMin = startMin + slotDuration;
+      const endMin = startMin + defaultSlotDuration;
       expectedStart = startMin;
       timelineMin = endMin;
-    } else if (appt.status === 'IN_PROGRESS') {
+    } else if (appt.status === 'ACTIVE') {
       const startMin = nowMin;
-      const expectedEndMin = startMin + slotDuration;
+      const expectedEndMin = startMin + defaultSlotDuration;
       expectedStart = startMin;
       timelineMin = Math.max(expectedEndMin, nowMin);
     } else {
       expectedStart = Math.max(timelineMin, scheduledStartMin);
-      timelineMin = expectedStart + slotDuration;
+      timelineMin = expectedStart + defaultSlotDuration;
     }
 
     const estimatedWait = Math.max(0, expectedStart - nowMin);
     const estimatedDelay = Math.max(0, expectedStart - scheduledStartMin);
 
-    if (appt.appointmentId === activeQueueItem.appointmentId) {
+    if (appt.id === activeQueueItem.appointmentId) {
       targetEstimatedWait = estimatedWait;
       targetEstimatedDelay = estimatedDelay;
       
       // Count waiting patients ahead
       for (let j = 0; j < i; j++) {
-        if (appointments[j].status === 'WAITING' || appointments[j].status === 'UPCOMING') {
+        if (activeAppointments[j].status === 'PENDING') {
           targetPatientsAhead++;
         }
       }
@@ -331,7 +256,7 @@ export const getLiveQueueTracking = async (appointmentId?: string): Promise<Live
   }
 
   return {
-    isActive: activeQueueItem.isActive !== undefined ? activeQueueItem.isActive : true,
+    isActive: activeQueueItem.isActive,
     queueNumber: activeQueueItem.tokenNumber || '0',
     currentServingToken,
     status: statusText,
@@ -343,26 +268,15 @@ export const getLiveQueueTracking = async (appointmentId?: string): Promise<Live
 };
 
 export const getActivities = async (): Promise<Activity[]> => {
-  const currentUid = auth.currentUser?.uid;
-  if (!currentUid) return [];
-
-  const snapshot = await getDocs(
-    query(collection(db, 'activities'), where('userId', '==', currentUid))
-  );
-
-  const list = snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      userId: data.userId || '',
-      type: data.type || 'GENERAL',
-      title: data.title || '',
-      description: data.description || '',
-      timestamp: data.timestamp || ''
-    };
-  });
-
-  return list.sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, 10);
+  const stored = localStorage.getItem('medplus_activities');
+  if (stored) {
+    try {
+      return JSON.parse(stored);
+    } catch (e) {
+      return [];
+    }
+  }
+  return [];
 };
 
 export const logActivity = async (activity: {
@@ -370,7 +284,7 @@ export const logActivity = async (activity: {
   title: string;
   description: string;
 }): Promise<Activity> => {
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = localStorage.getItem('medplus_uid');
   if (!currentUid) throw new Error('User not authenticated');
 
   const timestampStr = new Date().toLocaleString('en-US', {
@@ -382,7 +296,8 @@ export const logActivity = async (activity: {
     hour12: true
   });
 
-  const activityData = {
+  const newActivity: Activity = {
+    id: Math.random().toString(36).substring(2),
     userId: currentUid,
     type: activity.type,
     title: activity.title,
@@ -390,9 +305,9 @@ export const logActivity = async (activity: {
     timestamp: timestampStr
   };
 
-  const docRef = await addDoc(collection(db, 'activities'), activityData);
-  return {
-    id: docRef.id,
-    ...activityData
-  };
+  const list = await getActivities();
+  const updatedList = [newActivity, ...list].slice(0, 10);
+  localStorage.setItem('medplus_activities', JSON.stringify(updatedList));
+
+  return newActivity;
 };

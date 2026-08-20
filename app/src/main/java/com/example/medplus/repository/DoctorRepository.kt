@@ -1,95 +1,26 @@
 package com.example.medplus.repository
 
-import android.net.Uri
+import android.content.Context
+import android.util.Log
+import com.example.medplus.auth.model.User
 import com.example.medplus.model.Appointment
-import com.example.medplus.model.DoctorFeedback
 import com.example.medplus.model.DoctorProfile
 import com.example.medplus.model.QueueItem
-import com.example.medplus.auth.model.User
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.SetOptions
+import com.example.medplus.data.network.*
 import com.google.firebase.Timestamp
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
 
-/**
- * Repository to handle doctor-related data operations in Firestore.
- */
 class DoctorRepository {
 
     private val context = com.google.firebase.FirebaseApp.getInstance().applicationContext
-    private val firestore: FirebaseFirestore get() = FirebaseFirestore.getInstance()
-
-    /**
-     * Converts a document Uri to a Base64 string with Data URI prefix.
-     */
-    fun uploadDoctorDocument(
-        fileUri: Uri,
-        documentName: String,
-        onSuccess: (String) -> Unit,
-        onFailure: (String) -> Unit
-    ) {
-        val contentResolver = context.contentResolver
-
-        try {
-            // 1. Validate File Size (Max 300 KB)
-            val parcelFileDescriptor = contentResolver.openFileDescriptor(fileUri, "r")
-            val fileSize = parcelFileDescriptor?.statSize ?: 0
-            parcelFileDescriptor?.close()
-
-            if (fileSize > 300 * 1024) {
-                onFailure("File is too large. Maximum size is 300 KB.")
-                return
-            }
-
-            // 2. Determine MIME type
-            var mimeType = contentResolver.getType(fileUri)
-            if (mimeType == null) {
-                val extension = android.webkit.MimeTypeMap.getFileExtensionFromUrl(fileUri.toString())
-                if (extension != null) {
-                    mimeType = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
-                }
-            }
-            val actualMimeType = mimeType ?: "application/octet-stream"
-
-            // 3. Read bytes and convert to Base64
-            val inputStream = contentResolver.openInputStream(fileUri)
-            val bytes = try {
-                inputStream?.use { input ->
-                    val buffer = java.io.ByteArrayOutputStream()
-                    val data = ByteArray(16384)
-                    var nRead: Int
-                    while (input.read(data, 0, data.size).also { nRead = it } != -1) {
-                        buffer.write(data, 0, nRead)
-                    }
-                    buffer.toByteArray()
-                }
-            } catch (e: Exception) {
-                null
-            }
-
-            if (bytes == null) {
-                onFailure("Unable to read file content.")
-                return
-            }
-
-            val base64Data = android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT)
-            
-            // 4. Return as Data URI
-            val dataUri = "data:$actualMimeType;base64,$base64Data"
-            onSuccess(dataUri)
-
-        } catch (e: Exception) {
-            android.util.Log.e("DoctorRepository", "Base64 conversion failed", e)
-            onFailure("Failed to process document: ${e.message}")
-        }
-    }
+    private val sessionManager = SessionManager.getInstance(context)
+    private val apiService: ApiService get() = RetrofitClient.getClient(context)
 
     /**
      * Submits the doctor profile for verification (updates verificationStatus to PENDING).
@@ -99,12 +30,41 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("doctor_profiles").document(uid)
-            .update("verificationStatus", "PENDING")
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to submit verification request")
+        val request = DoctorProfileRequest(
+            fullName = null,
+            email = null,
+            phone = null,
+            qualification = null,
+            department = null,
+            specialization = null,
+            experienceYears = null,
+            registrationAuthority = null,
+            registrationNumber = null,
+            consultationFee = null,
+            bio = null,
+            profileImage = null,
+            registrationCertificateUrl = null,
+            verificationDocumentUrl = null,
+            workingDays = null,
+            consultationStartTime = null,
+            consultationEndTime = null,
+            lunchStartTime = null,
+            lunchEndTime = null,
+            breakStartTime = null,
+            breakEndTime = null,
+            slotDuration = null,
+            verificationStatus = "PENDING"
+        )
+        apiService.updateDoctorProfile(uid, request).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to submit verification request")
             }
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error submitting verification")
+            }
+        })
     }
 
     /**
@@ -115,11 +75,41 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("doctor_profiles").document(profile.uid).set(profile, SetOptions.merge())
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to save doctor profile")
+        val request = DoctorProfileRequest(
+            fullName = profile.fullName,
+            email = profile.email,
+            phone = profile.phone,
+            qualification = profile.qualification,
+            department = profile.department,
+            specialization = profile.specialization,
+            experienceYears = profile.experienceYears,
+            registrationAuthority = profile.registrationAuthority,
+            registrationNumber = profile.registrationNumber,
+            consultationFee = profile.consultationFee,
+            bio = profile.bio,
+            profileImage = profile.profileImage,
+            registrationCertificateUrl = profile.registrationCertificateUrl,
+            verificationDocumentUrl = profile.verificationDocumentUrl,
+            workingDays = profile.workingDays,
+            consultationStartTime = profile.consultationStartTime,
+            consultationEndTime = profile.consultationEndTime,
+            lunchStartTime = profile.lunchStartTime,
+            lunchEndTime = profile.lunchEndTime,
+            breakStartTime = profile.breakStartTime,
+            breakEndTime = profile.breakEndTime,
+            slotDuration = profile.slotDuration,
+            verificationStatus = profile.verificationStatus
+        )
+        apiService.updateDoctorProfile(profile.uid, request).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to save doctor profile")
             }
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error saving profile")
+            }
+        })
     }
 
     /**
@@ -130,17 +120,46 @@ class DoctorRepository {
         onSuccess: (DoctorProfile?) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("doctor_profiles").document(uid).get()
-            .addOnSuccessListener { doc ->
-                if (doc.exists()) {
-                    onSuccess(doc.toObject(DoctorProfile::class.java))
+        apiService.getDoctorProfile(uid).enqueue(object : Callback<DoctorProfileResponse> {
+            override fun onResponse(call: Call<DoctorProfileResponse>, response: Response<DoctorProfileResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val profile = DoctorProfile(
+                        uid = body.uid,
+                        fullName = body.fullName,
+                        email = body.email,
+                        phone = body.phone ?: "",
+                        qualification = body.qualification ?: "",
+                        department = body.department ?: "",
+                        specialization = body.specialization ?: "",
+                        experienceYears = body.experienceYears ?: 0,
+                        registrationAuthority = body.registrationAuthority ?: "",
+                        registrationNumber = body.registrationNumber ?: "",
+                        consultationFee = body.consultationFee ?: 0.0,
+                        bio = body.bio ?: "",
+                        profileImage = body.profileImage ?: "",
+                        registrationCertificateUrl = body.registrationCertificateUrl ?: "",
+                        verificationDocumentUrl = body.verificationDocumentUrl ?: "",
+                        workingDays = body.workingDays ?: emptyList(),
+                        consultationStartTime = body.consultationStartTime ?: "",
+                        consultationEndTime = body.consultationEndTime ?: "",
+                        lunchStartTime = body.lunchStartTime ?: "",
+                        lunchEndTime = body.lunchEndTime ?: "",
+                        breakStartTime = body.breakStartTime ?: "",
+                        breakEndTime = body.breakEndTime ?: "",
+                        slotDuration = body.slotDuration ?: 15,
+                        verificationStatus = body.verificationStatus ?: "DRAFT"
+                    )
+                    onSuccess(profile)
                 } else {
                     onSuccess(null)
                 }
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch profile")
+
+            override fun onFailure(call: Call<DoctorProfileResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching profile")
             }
+        })
     }
 
     /**
@@ -151,23 +170,53 @@ class DoctorRepository {
         onSuccess: (List<DoctorProfile>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("doctor_profiles")
-            .whereEqualTo("verificationStatus", "VERIFIED")
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                val doctors = querySnapshot.documents.mapNotNull { doc ->
-                    doc.toObject(DoctorProfile::class.java)
-                }
-                val filtered = if (department.isNotBlank()) {
-                    doctors.filter { it.department.equals(department, ignoreCase = true) }
+        apiService.getDoctors().enqueue(object : Callback<List<DoctorProfileResponse>> {
+            override fun onResponse(call: Call<List<DoctorProfileResponse>>, response: Response<List<DoctorProfileResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!.map { body ->
+                        DoctorProfile(
+                            uid = body.uid,
+                            fullName = body.fullName,
+                            email = body.email,
+                            phone = body.phone ?: "",
+                            qualification = body.qualification ?: "",
+                            department = body.department ?: "",
+                            specialization = body.specialization ?: "",
+                            experienceYears = body.experienceYears ?: 0,
+                            registrationAuthority = body.registrationAuthority ?: "",
+                            registrationNumber = body.registrationNumber ?: "",
+                            consultationFee = body.consultationFee ?: 0.0,
+                            bio = body.bio ?: "",
+                            profileImage = body.profileImage ?: "",
+                            registrationCertificateUrl = body.registrationCertificateUrl ?: "",
+                            verificationDocumentUrl = body.verificationDocumentUrl ?: "",
+                            workingDays = body.workingDays ?: emptyList(),
+                            consultationStartTime = body.consultationStartTime ?: "",
+                            consultationEndTime = body.consultationEndTime ?: "",
+                            lunchStartTime = body.lunchStartTime ?: "",
+                            lunchEndTime = body.lunchEndTime ?: "",
+                            breakStartTime = body.breakStartTime ?: "",
+                            breakEndTime = body.breakEndTime ?: "",
+                            slotDuration = body.slotDuration ?: 15,
+                            verificationStatus = body.verificationStatus ?: "DRAFT"
+                        )
+                    }
+
+                    val filtered = if (department.isNotBlank()) {
+                        list.filter { it.department.equals(department, ignoreCase = true) }
+                    } else {
+                        list
+                    }
+                    onSuccess(filtered)
                 } else {
-                    doctors
+                    onSuccess(emptyList())
                 }
-                onSuccess(filtered)
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch verified doctors")
+
+            override fun onFailure(call: Call<List<DoctorProfileResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching doctors")
             }
+        })
     }
 
     fun addDoctorFeedback(
@@ -178,22 +227,18 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-        val feedbackMap = hashMapOf(
-            "doctorId" to doctorId,
-            "patientId" to currentUid,
-            "rating" to rating,
-            "feedback" to feedback,
-            "appointmentId" to appointmentId,
-            "createdAt" to Timestamp.now()
-        )
-
-        firestore.collection("feedback")
-            .add(feedbackMap)
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to submit feedback")
+        val currentUid = sessionManager.getUserId() ?: ""
+        val request = FeedbackRequest(doctorId, currentUid, rating, feedback, appointmentId)
+        apiService.submitFeedback(request).enqueue(object : Callback<FeedbackResponse> {
+            override fun onResponse(call: Call<FeedbackResponse>, response: Response<FeedbackResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to submit feedback")
             }
+
+            override fun onFailure(call: Call<FeedbackResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error submitting feedback")
+            }
+        })
     }
 
     /**
@@ -206,22 +251,25 @@ class DoctorRepository {
         onResult: (Boolean) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("appointments")
-            .whereEqualTo("doctorId", doctorId)
-            .whereEqualTo("date", date)
-            .whereEqualTo("time", time)
-            .whereEqualTo("status", "UPCOMING")
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                onResult(!querySnapshot.isEmpty)
+        apiService.getDoctorAppointments(doctorId).enqueue(object : Callback<List<AppointmentResponse>> {
+            override fun onResponse(call: Call<List<AppointmentResponse>>, response: Response<List<AppointmentResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!
+                    val exists = list.any { it.date == date && it.time == time && it.status == "PENDING" }
+                    onResult(exists)
+                } else {
+                    onResult(false)
+                }
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to verify slot availability")
+
+            override fun onFailure(call: Call<List<AppointmentResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error checking slot")
             }
+        })
     }
 
     /**
-     * Creates a new appointment in Firestore.
+     * Creates a new appointment.
      */
     fun createAppointment(
         doctorId: String,
@@ -232,164 +280,90 @@ class DoctorRepository {
         onSuccess: (Appointment) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        // Fetch patient details first
-        firestore.collection("users").document(currentUid).get()
-            .addOnSuccessListener { patientDoc ->
-                val patientName = patientDoc.getString("fullName") ?: "Patient"
-
-                // Fetch doctor profile to get consultationStartTime and slotDuration
-                firestore.collection("doctor_profiles").document(doctorId).get()
-                    .addOnSuccessListener { doctorDoc ->
-                        val startTimeStr = doctorDoc.getString("consultationStartTime") ?: "09:00"
-                        val slotDuration = doctorDoc.getLong("slotDuration")?.toInt() ?: 15
-
-                        // Query existing appointments for doctor on this date to count bookings for the hour
-                        firestore.collection("appointments")
-                            .whereEqualTo("doctorId", doctorId)
-                            .whereEqualTo("date", date)
-                            .get()
-                            .addOnSuccessListener { querySnapshot ->
-                                val dayBookings = querySnapshot.documents
-                                val existingBookings = dayBookings.count { it.getString("time") == time }
-
-                                val diffMinutes = timeToMinutes(time) - timeToMinutes(startTimeStr)
-                                val baseToken = (diffMinutes / slotDuration).coerceAtLeast(1)
-                                val tokenNumber = (baseToken + existingBookings).toString()
-
-                                val newAppointmentRef = firestore.collection("appointments").document()
-                                val newAppointment = Appointment(
-                                    appointmentId = newAppointmentRef.id,
-                                    patientId = currentUid,
-                                    patientName = patientName,
-                                    doctorId = doctorId,
-                                    doctorName = doctorName,
-                                    department = department,
-                                    date = date,
-                                    time = time,
-                                    status = "UPCOMING",
-                                    tokenNumber = tokenNumber,
-                                    createdAt = Timestamp.now()
-                                )
-
-                                newAppointmentRef.set(newAppointment)
-                                    .addOnSuccessListener {
-                                        // Also create a queue item for this appointment
-                                        val queueRef = firestore.collection("queue").document()
-                                        val queueItem = QueueItem(
-                                            queueId = queueRef.id,
-                                            appointmentId = newAppointmentRef.id,
-                                            patientId = currentUid,
-                                            patientName = patientName,
-                                            doctorId = doctorId,
-                                            tokenNumber = tokenNumber,
-                                            status = "WAITING",
-                                            isActive = true,
-                                            date = date
-                                        )
-                                        queueRef.set(queueItem)
-                                            .addOnSuccessListener {
-                                                // 1. Create a notification for the patient
-                                                val notificationRef = firestore.collection("notifications").document()
-                                                val notificationData = hashMapOf(
-                                                    "userId" to currentUid,
-                                                    "title" to "Appointment Booked",
-                                                    "message" to "Your appointment with $doctorName ($department) is confirmed for $date at $time.",
-                                                    "type" to "APPOINTMENT",
-                                                    "read" to false,
-                                                    "isRead" to false,
-                                                    "timestamp" to com.google.firebase.Timestamp.now()
-                                                )
-                                                notificationRef.set(notificationData)
-
-                                                // 2. Create a notification for the doctor
-                                                val doctorNotificationRef = firestore.collection("notifications").document()
-                                                val doctorNotificationData = hashMapOf(
-                                                    "userId" to doctorId,
-                                                    "title" to "New Appointment Booked",
-                                                    "message" to "New appointment booked by $patientName for $date at $time.",
-                                                    "type" to "APPOINTMENT",
-                                                    "read" to false,
-                                                    "isRead" to false,
-                                                    "timestamp" to com.google.firebase.Timestamp.now()
-                                                )
-                                                doctorNotificationRef.set(doctorNotificationData)
-
-                                                // 3. Create an activity log for the patient
-                                                val activityRef = firestore.collection("activities").document()
-                                                val timestampStr = java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.US).format(java.util.Date())
-                                                val activityData = hashMapOf(
-                                                    "userId" to currentUid,
-                                                    "type" to "APPOINTMENT",
-                                                    "title" to "Booked Appointment",
-                                                    "description" to "Booked with $doctorName for $date at $time.",
-                                                    "timestamp" to timestampStr
-                                                )
-                                                activityRef.set(activityData)
-
-                                                onSuccess(newAppointment)
-                                            }
-                                            .addOnFailureListener { e ->
-                                                onFailure(e.message ?: "Failed to initialize queue item")
-                                            }
-                                    }
-                                    .addOnFailureListener { e ->
-                                        onFailure(e.message ?: "Failed to book appointment")
-                                    }
-                            }
-                            .addOnFailureListener { e ->
-                                onFailure(e.message ?: "Failed to count appointments")
-                            }
-                    }
-                    .addOnFailureListener { e ->
-                        onFailure(e.message ?: "Failed to fetch doctor profile details")
-                    }
+        val request = BookAppointmentRequest(
+            patientId = currentUid,
+            doctorId = doctorId,
+            doctorName = doctorName,
+            department = department,
+            date = date,
+            time = time,
+            reason = "General consultation"
+        )
+        apiService.bookAppointment(request).enqueue(object : Callback<AppointmentResponse> {
+            override fun onResponse(call: Call<AppointmentResponse>, response: Response<AppointmentResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val appointment = Appointment(
+                        appointmentId = body.id,
+                        patientId = body.patientId,
+                        patientName = body.patientName,
+                        doctorId = body.doctorId,
+                        doctorName = body.doctorName,
+                        department = body.department,
+                        date = body.date,
+                        time = body.time,
+                        status = body.status,
+                        tokenNumber = body.tokenNumber,
+                        createdAt = Timestamp.now()
+                    )
+                    onSuccess(appointment)
+                } else {
+                    onFailure(response.errorBody()?.string() ?: "Failed to book appointment")
+                }
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch patient information")
+
+            override fun onFailure(call: Call<AppointmentResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error booking appointment")
             }
+        })
     }
 
     /**
-     * Listen for real-time full queue updates for the doctor (via Firestore snapshots).
+     * Helper sync fetch method to support Flow polling
      */
-    fun getDoctorQueueFlow(date: String? = null): Flow<List<QueueItem>> = callbackFlow {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-        if (currentUid.isEmpty()) {
-            trySend(emptyList())
-            close()
-            return@callbackFlow
-        }
+    private fun fetchDoctorQueueSync(date: String?): List<QueueItem> {
+        val currentUid = sessionManager.getUserId() ?: ""
+        if (currentUid.isEmpty()) return emptyList()
 
-        var query = firestore.collection("queue")
-            .whereEqualTo("doctorId", currentUid)
-            .whereEqualTo("isActive", true)
-
-        if (date != null) {
-            query = query.whereEqualTo("date", date)
-        }
-
-        val registration = query.addSnapshotListener { snapshot, error ->
-            if (error != null) {
-                return@addSnapshotListener
-            }
-            if (snapshot != null) {
-                val list = snapshot.documents.mapNotNull { doc ->
-                    doc.toObject(QueueItem::class.java)?.copy(queueId = doc.id)
+        return try {
+            val response = apiService.getQueue(currentUid, date).execute()
+            if (response.isSuccessful && response.body() != null) {
+                response.body()!!.map { body ->
+                    QueueItem(
+                        queueId = body.id,
+                        appointmentId = body.appointmentId,
+                        doctorId = body.doctorId,
+                        patientId = body.patientId,
+                        patientName = body.patientName,
+                        tokenNumber = body.tokenNumber,
+                        status = body.status,
+                        department = body.department,
+                        date = body.date,
+                        isActive = body.isActive,
+                        estimatedWaitMinutes = body.estimatedWaitMinutes
+                    )
                 }
-                trySend(list)
-            }
-        }
-
-        awaitClose {
-            registration.remove()
+            } else emptyList()
+        } catch (e: Exception) {
+            emptyList()
         }
     }
+
+    /**
+     * Listen for real-time full queue updates for the doctor (via Flow polling).
+     */
+    fun getDoctorQueueFlow(date: String? = null): Flow<List<QueueItem>> = flow {
+        while (true) {
+            emit(fetchDoctorQueueSync(date))
+            delay(4000)
+        }
+    }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
     /**
      * Fetches all active queue entries for the doctor.
@@ -399,29 +373,40 @@ class DoctorRepository {
         onSuccess: (List<QueueItem>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        var query = firestore.collection("queue")
-            .whereEqualTo("doctorId", currentUid)
-
-        if (date != null) {
-            query = query.whereEqualTo("date", date)
-        }
-
-        query.get()
-            .addOnSuccessListener { querySnapshot ->
-                val list = querySnapshot.documents.mapNotNull { doc ->
-                    doc.toObject(QueueItem::class.java)?.copy(queueId = doc.id)
+        apiService.getQueue(currentUid, date).enqueue(object : Callback<List<QueueResponse>> {
+            override fun onResponse(call: Call<List<QueueResponse>>, response: Response<List<QueueResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!.map { body ->
+                        QueueItem(
+                            queueId = body.id,
+                            appointmentId = body.appointmentId,
+                            doctorId = body.doctorId,
+                            patientId = body.patientId,
+                            patientName = body.patientName,
+                            tokenNumber = body.tokenNumber,
+                            status = body.status,
+                            department = body.department,
+                            date = body.date,
+                            isActive = body.isActive,
+                            estimatedWaitMinutes = body.estimatedWaitMinutes
+                        )
+                    }
+                    onSuccess(list)
+                } else {
+                    onSuccess(emptyList())
                 }
-                onSuccess(list)
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch doctor queue")
+
+            override fun onFailure(call: Call<List<QueueResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching queue")
             }
+        })
     }
 
     /**
@@ -434,18 +419,17 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("queue").document(queueId)
-            .update("status", newStatus)
-            .addOnSuccessListener {
-                val isActive = !(newStatus == "COMPLETED" || newStatus == "CANCELLED")
-                firestore.collection("queue").document(queueId)
-                    .update("isActive", isActive)
-                    .addOnSuccessListener { onSuccess() }
-                    .addOnFailureListener { onSuccess() }
+        val request = StatusRequest(newStatus)
+        apiService.updateQueueStatus(queueId, request).enqueue(object : Callback<QueueResponse> {
+            override fun onResponse(call: Call<QueueResponse>, response: Response<QueueResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to update queue status")
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to update queue status")
+
+            override fun onFailure(call: Call<QueueResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error updating queue status")
             }
+        })
     }
 
     /**
@@ -455,50 +439,40 @@ class DoctorRepository {
         onSuccess: (List<User>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        firestore.collection("appointments")
-            .whereEqualTo("doctorId", currentUid)
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                val patientIds = querySnapshot.documents.mapNotNull { it.getString("patientId") }.distinct()
-                if (patientIds.isEmpty()) {
-                    onSuccess(emptyList())
-                    return@addOnSuccessListener
-                }
-
-                val userTasks = patientIds.chunked(10).map { chunk ->
-                    firestore.collection("users")
-                        .whereIn("uid", chunk)
-                        .get()
-                }
-
-                val users = mutableListOf<User>()
-                var completedCount = 0
-                
-                userTasks.forEach { task ->
-                    task.addOnSuccessListener { snapshot ->
-                        users.addAll(snapshot.documents.mapNotNull { it.toObject(User::class.java) })
-                        completedCount++
-                        if (completedCount == userTasks.size) {
-                            onSuccess(users)
-                        }
-                    }.addOnFailureListener { e ->
-                        onFailure(e.message ?: "Failed to fetch patient users")
+        apiService.getDoctorPatients(currentUid).enqueue(object : Callback<List<UserResponse>> {
+            override fun onResponse(call: Call<List<UserResponse>>, response: Response<List<UserResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!.map { body ->
+                        User(
+                            uid = body.uid,
+                            fullName = body.fullName,
+                            email = body.email,
+                            phone = body.phone,
+                            role = body.role,
+                            profileImage = body.profileImage ?: "",
+                            status = body.status ?: "ACTIVE"
+                        )
                     }
+                    onSuccess(list)
+                } else {
+                    onSuccess(emptyList())
                 }
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to load doctor appointments")
+
+            override fun onFailure(call: Call<List<UserResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching doctor patients")
             }
+        })
     }
 
     /**
-     * Updates doctor availability and practice details in Firestore.
+     * Updates doctor availability and practice details.
      */
     fun updateDoctorPracticeDetails(
         consultationFee: Double,
@@ -513,30 +487,48 @@ class DoctorRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        val updates = hashMapOf(
-            "consultationFee" to consultationFee,
-            "workingDays" to workingDays,
-            "consultationStartTime" to startTime,
-            "consultationEndTime" to endTime,
-            "lunchStartTime" to lunchStart,
-            "lunchEndTime" to lunchEnd,
-            "breakStartTime" to breakStart,
-            "breakEndTime" to breakEnd,
-            "slotDuration" to slotDuration
+        val request = DoctorProfileRequest(
+            fullName = null,
+            email = null,
+            phone = null,
+            qualification = null,
+            department = null,
+            specialization = null,
+            experienceYears = null,
+            registrationAuthority = null,
+            registrationNumber = null,
+            consultationFee = consultationFee,
+            bio = null,
+            profileImage = null,
+            registrationCertificateUrl = null,
+            verificationDocumentUrl = null,
+            workingDays = workingDays,
+            consultationStartTime = startTime,
+            consultationEndTime = endTime,
+            lunchStartTime = lunchStart,
+            lunchEndTime = lunchEnd,
+            breakStartTime = breakStart,
+            breakEndTime = breakEnd,
+            slotDuration = slotDuration,
+            verificationStatus = null
         )
 
-        firestore.collection("doctor_profiles").document(currentUid)
-            .set(updates, SetOptions.merge())
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to update availability")
+        apiService.updateDoctorProfile(currentUid, request).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to update practice details")
             }
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error updating practice details")
+            }
+        })
     }
 
     fun rescheduleAppointment(
@@ -549,211 +541,54 @@ class DoctorRepository {
         onSuccess: (Appointment) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-        if (currentUid.isEmpty()) {
-            onFailure("User not logged in")
-            return
-        }
-
-        // Fetch patient details first
-        firestore.collection("users").document(currentUid).get()
-            .addOnSuccessListener { patientDoc ->
-                val patientName = patientDoc.getString("fullName") ?: "Patient"
-
-                // Fetch doctor profile to get consultationStartTime and slotDuration
-                firestore.collection("doctor_profiles").document(doctorId).get()
-                    .addOnSuccessListener { doctorDoc ->
-                        val startTimeStr = doctorDoc.getString("consultationStartTime") ?: "09:00"
-                        val slotDuration = doctorDoc.getLong("slotDuration")?.toInt() ?: 15
-
-                        // Query existing appointments for doctor on this date to count bookings for the hour
-                        firestore.collection("appointments")
-                            .whereEqualTo("doctorId", doctorId)
-                            .whereEqualTo("date", date)
-                            .get()
-                            .addOnSuccessListener { querySnapshot ->
-                                val dayBookings = querySnapshot.documents
-                                val existingBookings = dayBookings.count { it.getString("time") == time }
-
-                                val diffMinutes = timeToMinutes(time) - timeToMinutes(startTimeStr)
-                                val baseToken = (diffMinutes / slotDuration).coerceAtLeast(1)
-                                val tokenNumber = (baseToken + existingBookings).toString()
-
-                                val appointmentRef = firestore.collection("appointments").document(appointmentId)
-                                
-                                val updatedAppointment = Appointment(
-                                    appointmentId = appointmentId,
-                                    patientId = currentUid,
-                                    patientName = patientName,
-                                    doctorId = doctorId,
-                                    doctorName = doctorName,
-                                    department = department,
-                                    date = date,
-                                    time = time,
-                                    status = "UPCOMING",
-                                    tokenNumber = tokenNumber,
-                                    createdAt = Timestamp.now()
-                                )
-
-                                appointmentRef.set(updatedAppointment, SetOptions.merge())
-                                    .addOnSuccessListener {
-                                        // Find existing queue item for this appointment
-                                        firestore.collection("queue")
-                                            .whereEqualTo("appointmentId", appointmentId)
-                                            .get()
-                                            .addOnSuccessListener { queueSnapshot ->
-                                                val queueDocs = queueSnapshot.documents
-                                                if (queueDocs.isNotEmpty()) {
-                                                    val queueItemDoc = queueDocs[0]
-                                                    firestore.collection("queue").document(queueItemDoc.id)
-                                                        .update(
-                                                            mapOf(
-                                                                "date" to date,
-                                                                "tokenNumber" to tokenNumber,
-                                                                "status" to "WAITING",
-                                                                "isActive" to true
-                                                            )
-                                                        )
-                                                        .addOnSuccessListener {
-                                                            createRescheduleNotifications(currentUid, patientName, doctorId, doctorName, department, date, time, onSuccess, onFailure, updatedAppointment)
-                                                        }
-                                                        .addOnFailureListener { e ->
-                                                            onFailure(e.message ?: "Failed to update queue item")
-                                                        }
-                                                } else {
-                                                    // Create new queue item
-                                                    val queueRef = firestore.collection("queue").document()
-                                                    val queueItem = QueueItem(
-                                                        queueId = queueRef.id,
-                                                        appointmentId = appointmentId,
-                                                        patientId = currentUid,
-                                                        patientName = patientName,
-                                                        doctorId = doctorId,
-                                                        tokenNumber = tokenNumber,
-                                                        status = "WAITING",
-                                                        isActive = true,
-                                                        date = date
-                                                    )
-                                                    queueRef.set(queueItem)
-                                                        .addOnSuccessListener {
-                                                            createRescheduleNotifications(currentUid, patientName, doctorId, doctorName, department, date, time, onSuccess, onFailure, updatedAppointment)
-                                                        }
-                                                        .addOnFailureListener { e ->
-                                                            onFailure(e.message ?: "Failed to initialize queue item")
-                                                        }
-                                                }
-                                            }
-                                            .addOnFailureListener { e ->
-                                                onFailure(e.message ?: "Failed to query existing queue item")
-                                            }
-                                    }
-                                    .addOnFailureListener { e ->
-                                        onFailure(e.message ?: "Failed to reschedule appointment")
-                                    }
-                            }
-                            .addOnFailureListener { e ->
-                                onFailure(e.message ?: "Failed to count appointments")
-                            }
-                    }
-                    .addOnFailureListener { e ->
-                        onFailure(e.message ?: "Failed to fetch doctor profile details")
-                    }
+        val request = RescheduleRequest(appointmentId, doctorId, doctorName, department, date, time, reason = "Rescheduling request")
+        apiService.rescheduleAppointment(request).enqueue(object : Callback<AppointmentResponse> {
+            override fun onResponse(call: Call<AppointmentResponse>, response: Response<AppointmentResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val appointment = Appointment(
+                        appointmentId = body.id,
+                        patientId = body.patientId,
+                        patientName = body.patientName,
+                        doctorId = body.doctorId,
+                        doctorName = body.doctorName,
+                        department = body.department,
+                        date = body.date,
+                        time = body.time,
+                        status = body.status,
+                        tokenNumber = body.tokenNumber,
+                        createdAt = Timestamp.now()
+                    )
+                    onSuccess(appointment)
+                } else {
+                    onFailure(response.errorBody()?.string() ?: "Failed to reschedule appointment")
+                }
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch patient information")
+
+            override fun onFailure(call: Call<AppointmentResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error rescheduling appointment")
             }
+        })
     }
 
-    private fun createRescheduleNotifications(
-        currentUid: String,
-        patientName: String,
-        doctorId: String,
-        doctorName: String,
-        department: String,
-        date: String,
-        time: String,
-        onSuccess: (Appointment) -> Unit,
-        onFailure: (String) -> Unit,
-        appointment: Appointment
+    fun uploadDoctorDocument(
+        fileUri: android.net.Uri,
+        documentName: String,
+        onSuccess: (String) -> Unit,
+        onFailure: (String) -> Unit
     ) {
-        // 1. Create a notification for the patient
-        val notificationRef = firestore.collection("notifications").document()
-        val notificationData = hashMapOf(
-            "userId" to currentUid,
-            "title" to "Appointment Rescheduled",
-            "message" to "Your appointment with $doctorName ($department) has been rescheduled to $date at $time.",
-            "type" to "APPOINTMENT",
-            "read" to false,
-            "isRead" to false,
-            "timestamp" to com.google.firebase.Timestamp.now()
-        )
-        notificationRef.set(notificationData)
-
-        // 2. Create a notification for the doctor
-        val doctorNotificationRef = firestore.collection("notifications").document()
-        val doctorNotificationData = hashMapOf(
-            "userId" to doctorId,
-            "title" to "Appointment Rescheduled by Patient",
-            "message" to "Appointment has been rescheduled by $patientName to $date at $time.",
-            "type" to "APPOINTMENT",
-            "read" to false,
-            "isRead" to false,
-            "timestamp" to com.google.firebase.Timestamp.now()
-        )
-        doctorNotificationRef.set(doctorNotificationData)
-
-        // 3. Create an activity log for the patient
-        val activityRef = firestore.collection("activities").document()
-        val timestampStr = java.text.SimpleDateFormat("MMM d, yyyy h:mm a", java.util.Locale.US).format(java.util.Date())
-        val activityData = hashMapOf(
-            "userId" to currentUid,
-            "type" to "APPOINTMENT",
-            "title" to "Rescheduled Appointment",
-            "description" to "Rescheduled with $doctorName to $date at $time.",
-            "timestamp" to timestampStr
-        )
-        activityRef.set(activityData)
-            .addOnSuccessListener {
-                onSuccess(appointment)
+        try {
+            val inputStream = context.contentResolver.openInputStream(fileUri)
+            val bytes = inputStream?.readBytes()
+            inputStream?.close()
+            if (bytes != null) {
+                val base64Data = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                onSuccess("data:image/jpeg;base64,$base64Data")
+            } else {
+                onFailure("Failed to read document bytes")
             }
-            .addOnFailureListener {
-                onSuccess(appointment)
-            }
-    }
-
-    private fun timeToMinutes(timeStr: String?): Int {
-        if (timeStr.isNullOrEmpty()) return 0
-        val cleanTime = timeStr.trim()
-        val locales = listOf(java.util.Locale.US, java.util.Locale.ENGLISH, java.util.Locale.getDefault())
-        val formats = listOf("hh:mm a", "h:mm a", "HH:mm", "H:mm")
-        
-        for (locale in locales) {
-            for (formatStr in formats) {
-                try {
-                    val sdf = java.text.SimpleDateFormat(formatStr, locale)
-                    val date = sdf.parse(cleanTime)
-                    if (date != null) {
-                        val cal = java.util.Calendar.getInstance()
-                        cal.time = date
-                        return cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE)
-                    }
-                } catch (_: Exception) {}
-            }
-        }
-        
-        return try {
-            val timeParts = cleanTime.split(" ")
-            val hm = timeParts[0].split(":")
-            var hour = hm[0].toInt()
-            val minute = hm[1].toInt()
-            if (timeParts.size > 1) {
-                val ampm = timeParts[1].uppercase(java.util.Locale.ROOT)
-                if (ampm.contains("PM") && hour < 12) hour += 12
-                if (ampm.contains("AM") && hour == 12) hour = 0
-            }
-            hour * 60 + minute
         } catch (e: Exception) {
-            0
+            onFailure(e.message ?: "Failed to upload document")
         }
     }
 }

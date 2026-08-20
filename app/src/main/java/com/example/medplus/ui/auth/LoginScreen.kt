@@ -58,6 +58,7 @@ fun LoginScreen(
     var emailError by remember { mutableStateOf<String?>(null) }
     var passwordError by remember { mutableStateOf<String?>(null) }
     var showRoleDialog by remember { mutableStateOf(false) }
+    var showApiConfigDialog by remember { mutableStateOf(false) }
 
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -94,6 +95,39 @@ fun LoginScreen(
         }
     }
 
+    if (showApiConfigDialog) {
+        var tempUrl by remember { mutableStateOf(com.example.medplus.data.network.SessionManager.getInstance(context).getApiUrl()) }
+        AlertDialog(
+            onDismissRequest = { showApiConfigDialog = false },
+            title = { Text("Configure API Server") },
+            text = {
+                Column {
+                    Text("Enter your backend server's URL. For physical devices on Wi-Fi, use your computer's local IP (e.g., http://192.168.1.100:5000/).", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = tempUrl,
+                        onValueChange = { tempUrl = it },
+                        label = { Text("API Server URL") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    com.example.medplus.data.network.SessionManager.getInstance(context).saveApiUrl(tempUrl)
+                    showApiConfigDialog = false
+                }) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showApiConfigDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     Scaffold(
         containerColor = Background,
     ) { innerPadding ->
@@ -106,7 +140,23 @@ fun LoginScreen(
                 .padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(48.dp))
+            // Configuration Gear Icon
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                contentAlignment = Alignment.TopEnd
+            ) {
+                IconButton(onClick = { showApiConfigDialog = true }) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Configure API Server",
+                        tint = SecondaryText
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             // ── BRANDING ──────────────────────────────────────────────────
             BrandHeader()

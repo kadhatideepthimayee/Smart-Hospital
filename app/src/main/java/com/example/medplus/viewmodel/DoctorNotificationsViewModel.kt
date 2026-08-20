@@ -28,7 +28,7 @@ class DoctorNotificationsViewModel : ViewModel() {
     }
 
     fun loadNotifications() {
-        val uid = auth.currentUser?.uid ?: return
+        val uid = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId() ?: return
         Log.d("DOCTOR_NOTIFICATION_DEBUG", "Loading notifications for UID: $uid")
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         

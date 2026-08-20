@@ -28,7 +28,7 @@ class DoctorPatientDetailsViewModel : ViewModel() {
     val uiState = _uiState.asStateFlow()
 
     fun loadPatientDetails(patientId: String) {
-        val doctorId = auth.currentUser?.uid ?: return
+        val doctorId = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId() ?: return
         Log.d("DOCTOR_PATIENT_DEBUG", "Loading patient details: $patientId")
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
 

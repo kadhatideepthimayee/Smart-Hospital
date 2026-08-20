@@ -119,7 +119,7 @@ fun MyAppointmentsScreen(
                     )
                 } else {
                     val filteredAppointments = when (selectedTabIndex) {
-                        0 -> uiState.appointments.filter { it.status == "UPCOMING" || it.status == "CONFIRMED" || it.status == "IN_PROGRESS" }
+                        0 -> uiState.appointments.filter { it.status == "UPCOMING" || it.status == "CONFIRMED" || it.status == "IN_PROGRESS" || it.status == "PENDING" || it.status == "ACTIVE" }
                         1 -> uiState.appointments.filter { it.status == "COMPLETED" }
                         2 -> uiState.appointments.filter { it.status == "CANCELLED" }
                         else -> emptyList()
@@ -246,7 +246,7 @@ private fun AppointmentCard(
             }
 
             // Actions (only for Upcoming)
-            if (appointment.status == "UPCOMING") {
+            if (appointment.status == "UPCOMING" || appointment.status == "PENDING" || appointment.status == "CONFIRMED") {
                 Spacer(Modifier.height(20.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -278,13 +278,13 @@ private fun AppointmentCard(
 @Composable
 private fun StatusBadge(status: String) {
     val color = when (status) {
-        "UPCOMING" -> Primary
+        "UPCOMING", "PENDING", "CONFIRMED", "ACTIVE" -> Primary
         "COMPLETED" -> Success
         "CANCELLED" -> Error
         else -> SecondaryText
     }
     val bgColor = when (status) {
-        "UPCOMING" -> Color(0xFFE3F2FD)
+        "UPCOMING", "PENDING", "CONFIRMED", "ACTIVE" -> Color(0xFFE3F2FD)
         "COMPLETED" -> Color(0xFFE8F5E9)
         "CANCELLED" -> Color(0xFFFFEBEE)
         else -> Outline.copy(alpha = 0.3f)

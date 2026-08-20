@@ -46,7 +46,7 @@ class DoctorQueueViewModel : ViewModel() {
     }
 
     fun startConsultation(queueId: String, appointmentId: String) {
-        val doctorId = auth.currentUser?.uid ?: return
+        val doctorId = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId() ?: return
         repository.updateQueueStatus(queueId, doctorId, "IN_PROGRESS",
             onSuccess = {
                 appointmentRepository.updateAppointmentStatus(appointmentId, doctorId, "IN_PROGRESS",
@@ -67,7 +67,7 @@ class DoctorQueueViewModel : ViewModel() {
         notes: String,
         followUpDate: String
     ) {
-        val doctorId = auth.currentUser?.uid ?: return
+        val doctorId = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId() ?: return
         _uiState.update { it.copy(isLoading = true) }
         val medicalRecordRepository = com.example.medplus.repository.MedicalRecordRepository()
         medicalRecordRepository.createMedicalRecord(

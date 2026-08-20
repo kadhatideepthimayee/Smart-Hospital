@@ -1,19 +1,64 @@
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.Properties
+import java.net.NetworkInterface
+import java.net.Inet4Address
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlinAndroid)
     alias(libs.plugins.kotlinCompose)
-    alias(libs.plugins.google.services)
 }
 
-// Google Services JSON is static with no API keys
+fun getLocalIpAddress(): String {
+    try {
+        val ips = mutableListOf<String>()
+        val interfaces = NetworkInterface.getNetworkInterfaces()
+        while (interfaces.hasMoreElements()) {
+            val networkInterface = interfaces.nextElement()
+            if (networkInterface.isLoopback || !networkInterface.isUp) continue
+            val addresses = networkInterface.inetAddresses
+            while (addresses.hasMoreElements()) {
+                val address = addresses.nextElement()
+                if (address is Inet4Address) {
+                    ips.add(address.hostAddress)
+                }
+            }
+        }
+        
+        // 1. Prioritize physical Wi-Fi subnet first
+        val wifiIp = ips.find { it.startsWith("172.23.") }
+        if (wifiIp != null) return wifiIp
+
+        // 2. Fallback to general 172.x subnets
+        val general172 = ips.find { it.startsWith("172.") }
+        if (general172 != null) return general172
+
+        // 3. Fallback to physical 192.168 subnets (ignoring VMware VMnet subnets)
+        val general192 = ips.find { it.startsWith("192.168.") && !it.startsWith("192.168.11.") && !it.startsWith("192.168.74.") }
+        if (general192 != null) return general192
+
+        // 4. Default fallback list
+        val anyMatch = ips.find { it.startsWith("192.168.") || it.startsWith("10.") || it.startsWith("172.") }
+        if (anyMatch != null) return anyMatch
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+    return "10.0.2.2"
+}
 
 android {
     namespace = "com.example.medplus"
     compileSdk = 35
+
+    val homeDir = System.getProperty("user.home")
+    val secretsFile = File(homeDir, ".medplus_secrets")
+    val secrets = Properties().apply {
+        if (secretsFile.exists()) {
+            secretsFile.inputStream().use { load(it) }
+        }
+    }
+    val firebaseApiKey = secrets.getProperty("FIREBASE_API_KEY") ?: "PLACEHOLDER_KEY"
 
     defaultConfig {
         applicationId = "com.example.medplus"
@@ -23,6 +68,18 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Inject Firebase configurations directly as string resources,
+        // allowing us to load the API key from a safe external location.
+        resValue("string", "google_api_key", firebaseApiKey)
+        resValue("string", "google_app_id", "1:366692040766:android:fea6231f06287d7de5516f")
+        resValue("string", "project_id", "medplus-a50ca")
+        resValue("string", "gcm_defaultSenderId", "366692040766")
+        resValue("string", "google_storage_bucket", "medplus-a50ca.firebasestorage.app")
+        resValue("string", "default_web_client_id", "366692040766-iduuu65jevefkpt2n04na5flh294jpec.apps.googleusercontent.com")
+        
+        val hostIp = getLocalIpAddress()
+        resValue("string", "default_api_url", "http://$hostIp:5000/")
     }
 
     buildTypes {
@@ -87,4 +144,3 @@ dependencies {
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.firebase:firebase-firestore-ktx")
 }
-

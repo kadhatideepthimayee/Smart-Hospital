@@ -37,8 +37,11 @@ fun DoctorAppointmentsScreen(
     viewModel: DoctorAppointmentsViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    var selectedTab by remember { mutableStateOf(0) }
+    val tabTitles = listOf("Today", "This Week", "Upcoming", "Completed")
     
     val todayAppointments = viewModel.getTodayAppointments()
+    val thisWeekAppointments = viewModel.getThisWeekAppointments()
     val upcomingAppointments = viewModel.getUpcomingAppointments()
     val completedAppointments = viewModel.getCompletedAppointments()
 
@@ -56,44 +59,86 @@ fun DoctorAppointmentsScreen(
         },
         containerColor = Background
     ) { padding ->
-        if (uiState.isLoading) {
-            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Primary)
-            }
-        } else if (uiState.errorMessage != null) {
-            AppointmentErrorState(
-                message = "Unable to load appointments.",
-                onRetry = { viewModel.loadAppointments() },
-                modifier = Modifier.padding(padding)
-            )
-        } else if (uiState.appointments.isEmpty()) {
-            AppointmentEmptyState(modifier = Modifier.padding(padding))
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(20.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            TabRow(
+                selectedTabIndex = selectedTab,
+                containerColor = Surface,
+                contentColor = Primary
             ) {
-                if (todayAppointments.isNotEmpty()) {
-                    item { AppointmentSectionHeader("Today") }
-                    items(todayAppointments, key = { it.appointmentId }) { appointment ->
-                        DoctorAppointmentCard(appointment) { onViewDetails(appointment.appointmentId) }
-                    }
+                tabTitles.forEachIndexed { index, title ->
+                    Tab(
+                        selected = selectedTab == index,
+                        onClick = { selectedTab = index },
+                        text = { Text(title, fontWeight = FontWeight.SemiBold) },
+                        selectedContentColor = Primary,
+                        unselectedContentColor = SecondaryText
+                    )
+                }
+            }
+
+            if (uiState.isLoading) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Primary)
+                }
+            } else if (uiState.errorMessage != null) {
+                AppointmentErrorState(
+                    message = "Unable to load appointments.",
+                    onRetry = { viewModel.loadAppointments() }
+                )
+            } else {
+                val currentAppointments = when (selectedTab) {
+                    0 -> todayAppointments
+                    1 -> thisWeekAppointments
+                    2 -> upcomingAppointments
+                    3 -> completedAppointments
+                    else -> emptyList()
                 }
 
-                if (upcomingAppointments.isNotEmpty()) {
-                    item { AppointmentSectionHeader("Upcoming") }
-                    items(upcomingAppointments, key = { it.appointmentId }) { appointment ->
-                        DoctorAppointmentCard(appointment) { onViewDetails(appointment.appointmentId) }
+                if (currentAppointments.isEmpty()) {
+                    val emptyMessage = when (selectedTab) {
+                        0 -> "No appointments scheduled for today."
+                        1 -> "No appointments scheduled for this week."
+                        2 -> "No upcoming appointments scheduled."
+                        3 -> "No completed appointments found."
+                        else -> "No appointments found."
                     }
-                }
-
-                if (completedAppointments.isNotEmpty()) {
-                    item { AppointmentSectionHeader("Completed") }
-                    items(completedAppointments, key = { it.appointmentId }) { appointment ->
-                        DoctorAppointmentCard(appointment) { onViewDetails(appointment.appointmentId) }
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.EventBusy,
+                                contentDescription = null,
+                                tint = Outline,
+                                modifier = Modifier.size(80.dp)
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            Text(emptyMessage, color = SecondaryText)
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(24.dp)
+                    ) {
+                        if (selectedTab == 1) {
+                            // "This Week" Tab - Group by date
+                            val grouped = currentAppointments.groupBy { it.date }
+                            grouped.forEach { (date, appointments) ->
+                                item { AppointmentSectionHeader(date) }
+                                items(appointments, key = { it.appointmentId }) { appointment ->
+                                    DoctorAppointmentCard(appointment) { onViewDetails(appointment.appointmentId) }
+                                }
+                            }
+                        } else {
+                            // Other Tabs - Simple list
+                            items(currentAppointments, key = { it.appointmentId }) { appointment ->
+                                DoctorAppointmentCard(appointment) { onViewDetails(appointment.appointmentId) }
+                            }
+                        }
                     }
                 }
             }

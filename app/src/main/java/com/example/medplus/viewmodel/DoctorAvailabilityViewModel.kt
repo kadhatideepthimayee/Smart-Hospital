@@ -37,7 +37,7 @@ class DoctorAvailabilityViewModel : ViewModel() {
     }
 
     fun loadAvailability() {
-        val uid = auth.currentUser?.uid ?: return
+        val uid = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId() ?: return
         Log.d("DOCTOR_SCHEDULE_DEBUG", "Loading availability for UID: $uid")
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
         
@@ -81,7 +81,7 @@ class DoctorAvailabilityViewModel : ViewModel() {
         breakEnd: String = "",
         slotDuration: Int
     ) {
-        val uid = auth.currentUser?.uid ?: return
+        val uid = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId() ?: return
         Log.d("DOCTOR_SCHEDULE_DEBUG", "Saving schedule for UID: $uid")
         
         // Basic Validation

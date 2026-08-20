@@ -24,7 +24,7 @@ class DashboardViewModel : ViewModel() {
 
     fun loadDashboardData() {
         dashboardJob?.cancel()
-        val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+        val uid = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId()
         android.util.Log.d("PATIENT_APPOINTMENTS_DEBUG", "Loading dashboard data for patient UID: $uid")
 
         dashboardJob = viewModelScope.launch {

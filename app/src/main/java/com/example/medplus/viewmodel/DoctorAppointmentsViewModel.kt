@@ -41,23 +41,55 @@ class DoctorAppointmentsViewModel : ViewModel() {
 
     fun getTodayAppointments(): List<Appointment> {
         val todayStr = LocalDate.now().format(DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH))
-        return _uiState.value.appointments.filter { it.date == todayStr }
+        return _uiState.value.appointments.filter { 
+            it.date == todayStr && it.status.trim().uppercase() != "COMPLETED" && it.status.trim().uppercase() != "CANCELLED"
+        }
     }
 
     fun getUpcomingAppointments(): List<Appointment> {
         val today = LocalDate.now()
         val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH)
         return _uiState.value.appointments.filter {
+            if (it.status.trim().uppercase() == "COMPLETED" || it.status.trim().uppercase() == "CANCELLED") {
+                return@filter false
+            }
             try {
                 val apptDate = LocalDate.parse(it.date, formatter)
-                apptDate.isAfter(today) && it.status.trim().uppercase() != "COMPLETED" && it.status.trim().uppercase() != "CANCELLED"
+                apptDate.isAfter(today)
             } catch (e: Exception) {
-                false
+                val todayStr = today.format(formatter)
+                it.date != todayStr
             }
         }.sortedBy { it.timestamp?.seconds ?: 0L }
     }
 
     fun getCompletedAppointments(): List<Appointment> {
         return _uiState.value.appointments.filter { it.status.trim().uppercase() == "COMPLETED" }
+    }
+
+    fun getThisWeekAppointments(): List<Appointment> {
+        val today = LocalDate.now()
+        val endOfWeek = today.plusDays(7)
+        val formatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH)
+        return _uiState.value.appointments.filter {
+            val status = it.status.trim().uppercase()
+            if (status == "COMPLETED" || status == "CANCELLED") {
+                return@filter false
+            }
+            try {
+                val apptDate = LocalDate.parse(it.date, formatter)
+                !apptDate.isBefore(today) && !apptDate.isAfter(endOfWeek)
+            } catch (e: Exception) {
+                false
+            }
+        }.sortedWith { a1, a2 ->
+            try {
+                val d1 = LocalDate.parse(a1.date, formatter)
+                val d2 = LocalDate.parse(a2.date, formatter)
+                d1.compareTo(d2)
+            } catch (e: Exception) {
+                0
+            }
+        }
     }
 }

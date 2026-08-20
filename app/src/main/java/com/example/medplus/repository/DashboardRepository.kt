@@ -1,15 +1,17 @@
 package com.example.medplus.repository
 
+import android.content.Context
+import android.content.SharedPreferences
 import com.example.medplus.auth.model.User
 import com.example.medplus.data.network.SessionManager
 import com.example.medplus.dashboard.model.*
 import com.example.medplus.model.Appointment
 import com.example.medplus.model.Notification
 import com.example.medplus.model.QueueItem
-import com.google.android.gms.tasks.Tasks
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
+import com.example.medplus.data.network.*
+import com.google.firebase.Timestamp
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -17,10 +19,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -28,36 +31,49 @@ import java.util.Locale
 
 class DashboardRepository {
 
-    private val firestore: FirebaseFirestore get() = FirebaseFirestore.getInstance()
     private val context = com.google.firebase.FirebaseApp.getInstance().applicationContext
     private val sessionManager = SessionManager.getInstance(context)
+    private val apiService: ApiService get() = RetrofitClient.getClient(context)
+    private val prefs: SharedPreferences = context.getSharedPreferences("medplus_activities_prefs", Context.MODE_PRIVATE)
+    private val gson = Gson()
 
     fun getCurrentUser(
         onSuccess: (User) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        firestore.collection("users").document(currentUid).get()
-            .addOnSuccessListener { doc ->
-                val user = doc.toObject(User::class.java)
-                if (user != null) {
+        apiService.getUserProfile(currentUid).enqueue(object : Callback<UserResponse> {
+            override fun onResponse(call: Call<UserResponse>, response: Response<UserResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val user = User(
+                        uid = body.uid,
+                        fullName = body.fullName,
+                        email = body.email,
+                        phone = body.phone,
+                        role = body.role,
+                        profileImage = body.profileImage ?: "",
+                        status = body.status ?: "ACTIVE"
+                    )
                     onSuccess(user)
                 } else {
-                    onFailure("User details not found")
+                    onFailure(response.errorBody()?.string() ?: "Failed to fetch profile details")
                 }
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to get current user details")
+
+            override fun onFailure(call: Call<UserResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching user details")
             }
+        })
     }
 
     /**
-     * Update user profile in Firestore
+     * Update user profile
      */
     fun updateUserProfile(
         fullName: String,
@@ -65,26 +81,27 @@ class DashboardRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        firestore.collection("users").document(currentUid)
-            .update(
-                mapOf(
-                    "fullName" to fullName,
-                    "phone" to phone
-                )
-            )
-            .addOnSuccessListener {
-                sessionManager.updateProfile(fullName, phone)
-                onSuccess()
+        val request = UpdateProfileRequest(fullName, phone)
+        apiService.updateUserProfile(currentUid, request).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) {
+                    sessionManager.updateProfile(fullName, phone)
+                    onSuccess()
+                } else {
+                    onFailure(response.errorBody()?.string() ?: "Failed to update profile details")
+                }
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to update profile details")
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error updating profile")
             }
+        })
     }
 
     /**
@@ -94,22 +111,26 @@ class DashboardRepository {
         onSuccess: (Int) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        firestore.collection("notifications")
-            .whereEqualTo("userId", currentUid)
-            .whereEqualTo("isRead", false)
-            .get()
-            .addOnSuccessListener { snapshot ->
-                onSuccess(snapshot.size())
+        apiService.getNotifications(currentUid).enqueue(object : Callback<List<NotificationResponse>> {
+            override fun onResponse(call: Call<List<NotificationResponse>>, response: Response<List<NotificationResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val count = response.body()!!.count { it.read == 0 }
+                    onSuccess(count)
+                } else {
+                    onSuccess(0)
+                }
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch unread notification count")
+
+            override fun onFailure(call: Call<List<NotificationResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching count")
             }
+        })
     }
 
     /**
@@ -119,92 +140,105 @@ class DashboardRepository {
         onSuccess: (List<Notification>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        firestore.collection("notifications")
-            .whereEqualTo("userId", currentUid)
-            .orderBy("timestamp", Query.Direction.DESCENDING)
-            .get()
-            .addOnSuccessListener { snapshot ->
-                val notifications = snapshot.documents.mapNotNull { doc ->
-                    doc.toObject(Notification::class.java)?.copy(id = doc.id)
+        apiService.getNotifications(currentUid).enqueue(object : Callback<List<NotificationResponse>> {
+            override fun onResponse(call: Call<List<NotificationResponse>>, response: Response<List<NotificationResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!.map { body ->
+                        Notification(
+                            id = body.id,
+                            userId = body.userId,
+                            title = body.title,
+                            message = body.message,
+                            type = body.type ?: "GENERAL",
+                            isRead = body.read == 1,
+                            timestamp = Timestamp.now()
+                        )
+                    }
+                    onSuccess(list)
+                } else {
+                    onSuccess(emptyList())
                 }
-                onSuccess(notifications)
             }
-            .addOnFailureListener { e ->
-                // Fallback in case orderBy requires an index that isn't built yet
-                firestore.collection("notifications")
-                    .whereEqualTo("userId", currentUid)
-                    .get()
-                    .addOnSuccessListener { innerSnapshot ->
-                        val notifications = innerSnapshot.documents.mapNotNull { doc ->
-                            doc.toObject(Notification::class.java)?.copy(id = doc.id)
-                        }.sortedByDescending { it.timestamp }
-                        onSuccess(notifications)
-                    }
-                    .addOnFailureListener {
-                        onFailure(e.message ?: "Failed to fetch notifications")
-                    }
+
+            override fun onFailure(call: Call<List<NotificationResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching notifications")
             }
+        })
     }
 
     /**
      * Mark a notification as read
      */
     fun markNotificationAsRead(id: String) {
-        firestore.collection("notifications").document(id)
-            .update(
-                mapOf(
-                    "read" to true,
-                    "isRead" to true
-                )
-            )
-            .addOnFailureListener { e ->
-                android.util.Log.e("DashboardRepository", "Failed to mark notification read", e)
-            }
+        apiService.markNotificationAsRead(id).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {}
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {}
+        })
     }
 
     /**
      * Delete a notification
      */
     fun deleteNotification(id: String, onSuccess: () -> Unit, onFailure: (String) -> Unit) {
-        firestore.collection("notifications").document(id).delete()
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to delete notification")
+        apiService.deleteNotification(id).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to delete notification")
             }
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error deleting notification")
+            }
+        })
     }
 
     /**
      * Mark all notifications as read for current user
      */
     fun markAllNotificationsAsRead(onSuccess: () -> Unit, onFailure: (String) -> Unit) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        firestore.collection("notifications")
-            .whereEqualTo("userId", currentUid)
-            .whereEqualTo("isRead", false)
-            .get()
-            .addOnSuccessListener { snapshot ->
-                val batch = firestore.batch()
-                snapshot.documents.forEach { doc ->
-                    batch.update(doc.reference, mapOf("read" to true, "isRead" to true))
+        apiService.getNotifications(currentUid).enqueue(object : Callback<List<NotificationResponse>> {
+            override fun onResponse(call: Call<List<NotificationResponse>>, response: Response<List<NotificationResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val unread = response.body()!!.filter { it.read == 0 }
+                    var completed = 0
+                    if (unread.isEmpty()) {
+                        onSuccess()
+                        return
+                    }
+                    unread.forEach { notification ->
+                        apiService.markNotificationAsRead(notification.id).enqueue(object : Callback<MsgResponse> {
+                            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                                completed++
+                                if (completed == unread.size) onSuccess()
+                            }
+
+                            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                                completed++
+                                if (completed == unread.size) onSuccess()
+                            }
+                        })
+                    }
+                } else {
+                    onSuccess()
                 }
-                batch.commit()
-                    .addOnSuccessListener { onSuccess() }
-                    .addOnFailureListener { e -> onFailure(e.message ?: "Failed to commit mark all read batch") }
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch notifications to mark read")
+
+            override fun onFailure(call: Call<List<NotificationResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error")
             }
+        })
     }
 
     private fun timeToMinutes(timeStr: String?): Int {
@@ -226,21 +260,7 @@ class DashboardRepository {
                 } catch (_: Exception) {}
             }
         }
-        
-        return try {
-            val timeParts = cleanTime.split(" ")
-            val hm = timeParts[0].split(":")
-            var hour = hm[0].toInt()
-            val minute = hm[1].toInt()
-            if (timeParts.size > 1) {
-                val ampm = timeParts[1].uppercase(java.util.Locale.ROOT)
-                if (ampm.contains("PM") && hour < 12) hour += 12
-                if (ampm.contains("AM") && hour == 12) hour = 0
-            }
-            hour * 60 + minute
-        } catch (e: Exception) {
-            0
-        }
+        return 0
     }
 
     private fun parseAppointmentDateTime(dateStr: String, timeStr: String): Date? {
@@ -259,17 +279,26 @@ class DashboardRepository {
 
     private fun getUpcomingAppointmentSync(uid: String): UpcomingAppointment? {
         return try {
-            val snapshot = Tasks.await(
-                firestore.collection("appointments")
-                    .whereEqualTo("patientId", uid)
-                    .get()
-            )
-            
-            // Filter non-cancelled appointments that are today or in the future
-            val upcoming = snapshot.documents.mapNotNull { doc ->
-                doc.toObject(Appointment::class.java)?.copy(appointmentId = doc.id)
+            val res = apiService.getPatientAppointments(uid).execute()
+            if (!res.isSuccessful || res.body() == null) return null
+            val list = res.body()!!
+
+            val upcoming = list.map { body ->
+                Appointment(
+                    appointmentId = body.id,
+                    patientId = body.patientId,
+                    patientName = body.patientName,
+                    doctorId = body.doctorId,
+                    doctorName = body.doctorName,
+                    department = body.department,
+                    date = body.date,
+                    time = body.time,
+                    status = body.status,
+                    tokenNumber = body.tokenNumber,
+                    createdAt = Timestamp.now()
+                )
             }.filter { appt ->
-                val isCorrectStatus = appt.status == "UPCOMING" || appt.status == "IN_PROGRESS"
+                val isCorrectStatus = appt.status == "PENDING" || appt.status == "ACTIVE" || appt.status == "UPCOMING" || appt.status == "CONFIRMED"
                 if (!isCorrectStatus) return@filter false
                 
                 val apptDate = parseAppointmentDateTime(appt.date, appt.time)
@@ -307,19 +336,27 @@ class DashboardRepository {
         }
     }
 
-    fun getUpcomingAppointmentFlow(uid: String): Flow<Appointment?> = callbackFlow {
-        val listener = firestore.collection("appointments")
-            .whereEqualTo("patientId", uid)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    android.util.Log.e("DashboardRepository", "Error listening to upcoming appointments flow", error)
-                    return@addSnapshotListener
-                }
-                if (snapshot != null) {
-                    val upcoming = snapshot.documents.mapNotNull { doc ->
-                        doc.toObject(Appointment::class.java)?.copy(appointmentId = doc.id)
+    fun getUpcomingAppointmentFlow(uid: String): Flow<Appointment?> = flow {
+        while (true) {
+            val res = try {
+                val response = apiService.getPatientAppointments(uid).execute()
+                if (response.isSuccessful && response.body() != null) {
+                    response.body()!!.map { body ->
+                        Appointment(
+                            appointmentId = body.id,
+                            patientId = body.patientId,
+                            patientName = body.patientName,
+                            doctorId = body.doctorId,
+                            doctorName = body.doctorName,
+                            department = body.department,
+                            date = body.date,
+                            time = body.time,
+                            status = body.status,
+                            tokenNumber = body.tokenNumber,
+                            createdAt = Timestamp.now()
+                        )
                     }.filter { appt ->
-                        val isCorrectStatus = appt.status == "UPCOMING" || appt.status == "IN_PROGRESS"
+                        val isCorrectStatus = appt.status == "PENDING" || appt.status == "ACTIVE" || appt.status == "UPCOMING" || appt.status == "CONFIRMED"
                         if (!isCorrectStatus) return@filter false
                         
                         val apptDate = parseAppointmentDateTime(appt.date, appt.time)
@@ -339,18 +376,20 @@ class DashboardRepository {
                             else -> d1.compareTo(d2)
                         }
                     }.firstOrNull()
-
-                    trySend(upcoming)
-                }
+                } else null
+            } catch (e: Exception) {
+                null
             }
-        awaitClose { listener.remove() }
-    }
+            emit(res)
+            delay(5000)
+        }
+    }.flowOn(kotlinx.coroutines.Dispatchers.IO)
 
     /**
-     * Get the next upcoming appointment for the patient (Real-time updates via snapshot listeners)
+     * Get the next upcoming appointment for the patient
      */
     fun getUpcomingAppointmentUpdates(): Flow<UpcomingAppointment?> {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) return kotlinx.coroutines.flow.flowOf(null)
         
         return getUpcomingAppointmentFlow(currentUid).map { appointment ->
@@ -374,7 +413,7 @@ class DashboardRepository {
         onSuccess: (UpcomingAppointment?) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onSuccess(null)
             return
@@ -389,118 +428,66 @@ class DashboardRepository {
     }
 
     private fun getLiveQueueSync(appointmentId: String?): LiveQueueInfo? {
-        try {
-            val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-            if (currentUid.isEmpty()) return null
+        val currentUid = sessionManager.getUserId() ?: ""
+        if (currentUid.isEmpty()) return null
 
-            var activeQueueItem: QueueItem? = null
+        return try {
+            val apptsCall = apiService.getPatientAppointments(currentUid).execute()
+            if (!apptsCall.isSuccessful || apptsCall.body() == null) return null
+            val patientAppts = apptsCall.body()!!
 
-            if (!appointmentId.isNullOrEmpty()) {
-                val snapshot = Tasks.await(
-                    firestore.collection("queue")
-                        .whereEqualTo("appointmentId", appointmentId)
-                        .get()
-                )
-                val firstDoc = snapshot.documents.firstOrNull()
-                activeQueueItem = firstDoc?.toObject(QueueItem::class.java)?.copy(queueId = firstDoc.id)
+            val activeAppt = if (!appointmentId.isNullOrEmpty()) {
+                patientAppts.find { it.id == appointmentId }
             } else {
-                // Find next upcoming appointment
-                val snapshotAppt = Tasks.await(
-                    firestore.collection("appointments")
-                        .whereEqualTo("patientId", currentUid)
-                        .get()
-                )
-                val upcoming = snapshotAppt.documents.mapNotNull { doc ->
-                    doc.toObject(Appointment::class.java)?.copy(appointmentId = doc.id)
-                }.filter { it.status == "UPCOMING" || it.status == "IN_PROGRESS" }
-                 .sortedBy { it.date + " " + it.time }
-                 .firstOrNull()
+                patientAppts.find { it.status == "PENDING" || it.status == "ACTIVE" }
+            } ?: return null
 
-                if (upcoming != null) {
-                    val snapshotQueue = Tasks.await(
-                        firestore.collection("queue")
-                            .whereEqualTo("appointmentId", upcoming.appointmentId)
-                            .whereEqualTo("isActive", true)
-                            .get()
-                    )
-                    val firstDoc = snapshotQueue.documents.firstOrNull()
-                    activeQueueItem = firstDoc?.toObject(QueueItem::class.java)?.copy(queueId = firstDoc.id)
-                }
+            val doctorId = activeAppt.doctorId
+            val date = activeAppt.date
 
-                if (activeQueueItem == null) {
-                    val snapshotQueueFallback = Tasks.await(
-                        firestore.collection("queue")
-                            .whereEqualTo("patientId", currentUid)
-                            .whereEqualTo("isActive", true)
-                            .get()
-                    )
-                    val firstDoc = snapshotQueueFallback.documents.firstOrNull()
-                    activeQueueItem = firstDoc?.toObject(QueueItem::class.java)?.copy(queueId = firstDoc.id)
-                }
-            }
-
-            if (activeQueueItem == null) return null
-
-            val doctorId = activeQueueItem.doctorId
-            val date = activeQueueItem.date
+            // Get doctor queue list
+            val queueCall = apiService.getQueue(doctorId, date).execute()
+            if (!queueCall.isSuccessful || queueCall.body() == null) return null
+            val doctorQueue = queueCall.body()!!
+            val activeQueueItem = doctorQueue.find { it.appointmentId == activeAppt.id } ?: return null
 
             // Fetch doctor profile
-            val doctorDoc = Tasks.await(firestore.collection("doctor_profiles").document(doctorId).get())
-            val defaultSlotDuration = if (doctorDoc.exists()) doctorDoc.getLong("slotDuration")?.toInt() ?: 15 else 15
-            val consultationStartTimeStr = if (doctorDoc.exists()) doctorDoc.getString("consultationStartTime") ?: "09:00" else "09:00"
+            val doctorCall = apiService.getDoctorProfile(doctorId).execute()
+            val doctorProfile = doctorCall.body()
+            val defaultSlotDuration = doctorProfile?.slotDuration ?: 15
+            val consultationStartTimeStr = doctorProfile?.consultationStartTime ?: "09:00 AM"
 
-            // Fetch all appointments for doctor on date
-            val apptSnapshot = Tasks.await(
-                firestore.collection("appointments")
-                    .whereEqualTo("doctorId", doctorId)
-                    .whereEqualTo("date", date)
-                    .get()
-            )
-            val appointments = apptSnapshot.documents.mapNotNull { doc ->
-                doc.toObject(Appointment::class.java)?.copy(appointmentId = doc.id)
-            }.filter { it.status != "CANCELLED" }
-             .sortedWith(compareBy({ timeToMinutes(it.time) }, { it.createdAt.seconds }))
+            // Get doctor appointments
+            val doctorApptsCall = apiService.getDoctorAppointments(doctorId).execute()
+            if (!doctorApptsCall.isSuccessful || doctorApptsCall.body() == null) return null
+            val allDoctorAppts = doctorApptsCall.body()!!.filter { it.date == date && it.status != "CANCELLED" }
+                .sortedWith(compareBy({ timeToMinutes(it.time) }, { it.createdAt }))
 
-            // 1. Calculate average consultation duration
-            val completedAppts = appointments.filter { it.status == "COMPLETED" && it.consultationStartedAt != null && it.consultationCompletedAt != null }
+            // Calculate live queue stats
+            val completedAppts = allDoctorAppts.filter { it.status == "COMPLETED" }
             var slotDuration = defaultSlotDuration
-            if (completedAppts.isNotEmpty()) {
-                var totalDuration = 0L
-                val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
-                completedAppts.forEach { appt ->
-                    try {
-                        val start = sdf.parse(appt.consultationStartedAt!!)?.time ?: 0L
-                        val end = sdf.parse(appt.consultationCompletedAt!!)?.time ?: 0L
-                        totalDuration += (end - start) / 60000
-                    } catch (e: Exception) {}
-                }
-                slotDuration = Math.max(5, Math.round(totalDuration.toDouble() / completedAppts.size).toInt())
-            }
 
-            // 2. Timeline simulation
             val calendar = Calendar.getInstance()
             val nowMin = calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE)
-
             var timelineMin = timeToMinutes(consultationStartTimeStr)
 
             var targetEstimatedWait = 0
             var targetEstimatedDelay = 0
             var targetPatientsAhead = 0
 
-            // Current serving token
+            // Determine current serving token
             var currentServingToken = "0"
-            val inProgressAppt = appointments.find { it.status == "IN_PROGRESS" }
+            val inProgressAppt = allDoctorAppts.find { it.status == "ACTIVE" }
             if (inProgressAppt != null) {
-                currentServingToken = inProgressAppt.tokenNumber ?: "0"
+                currentServingToken = inProgressAppt.tokenNumber
             } else {
-                val completedList = appointments.filter { it.status == "COMPLETED" }
-                if (completedList.isNotEmpty()) {
-                    currentServingToken = completedList.last().tokenNumber ?: "0"
+                if (completedAppts.isNotEmpty()) {
+                    currentServingToken = completedAppts.last().tokenNumber
                 }
             }
 
-            for (i in appointments.indices) {
-                val appt = appointments[i]
+            for (i in allDoctorAppts.indices) {
+                val appt = allDoctorAppts[i]
                 val scheduledStartMin = timeToMinutes(appt.time)
 
                 var expectedStart = scheduledStartMin
@@ -509,7 +496,7 @@ class DashboardRepository {
                     val endMin = startMin + slotDuration
                     expectedStart = startMin
                     timelineMin = endMin
-                } else if (appt.status == "IN_PROGRESS") {
+                } else if (appt.status == "ACTIVE") {
                     val startMin = nowMin
                     val expectedEndMin = startMin + slotDuration
                     expectedStart = startMin
@@ -522,13 +509,12 @@ class DashboardRepository {
                 val estimatedWait = Math.max(0, expectedStart - nowMin)
                 val estimatedDelay = Math.max(0, expectedStart - scheduledStartMin)
 
-                if (appt.appointmentId == activeQueueItem.appointmentId) {
+                if (appt.id == activeQueueItem.appointmentId) {
                     targetEstimatedWait = estimatedWait
                     targetEstimatedDelay = estimatedDelay
 
                     for (j in 0 until i) {
-                        val aheadAppt = appointments[j]
-                        if (aheadAppt.status == "WAITING" || aheadAppt.status == "UPCOMING") {
+                        if (allDoctorAppts[j].status == "PENDING") {
                             targetPatientsAhead++
                         }
                     }
@@ -545,7 +531,7 @@ class DashboardRepository {
                 statusText = "DOCTOR_RUNNING_LATE"
             }
 
-            return LiveQueueInfo(
+            LiveQueueInfo(
                 isActive = activeQueueItem.isActive,
                 queueNumber = activeQueueItem.tokenNumber ?: "0",
                 currentServingToken = currentServingToken,
@@ -553,225 +539,22 @@ class DashboardRepository {
                 patientsAhead = targetPatientsAhead,
                 estimatedWaitMinutes = targetEstimatedWait,
                 crowdLevel = crowdLevel,
-                department = activeQueueItem.department
+                department = activeQueueItem.department ?: ""
             )
         } catch (e: Exception) {
-            return null
+            null
         }
     }
 
     /**
-     * Listen for real-time queue updates (via snapshot listeners)
+     * Listen for real-time queue updates (via flow polling)
      */
-    fun getLiveQueueUpdates(appointmentId: String? = null): Flow<LiveQueueInfo?> = callbackFlow {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-        if (currentUid.isEmpty()) {
-            trySend(null)
-            close()
-            return@callbackFlow
+    fun getLiveQueueUpdates(appointmentId: String? = null): Flow<LiveQueueInfo?> = flow {
+        while (true) {
+            emit(getLiveQueueSync(appointmentId))
+            delay(4000)
         }
-
-        var doctorApptsListener: com.google.firebase.firestore.ListenerRegistration? = null
-        var queueItemListener: com.google.firebase.firestore.ListenerRegistration? = null
-
-        val processWithAppointment = { targetApptId: String, targetDoctorId: String, targetDate: String ->
-            // Cancel previous sub-listeners before setting up new ones
-            doctorApptsListener?.remove()
-            doctorApptsListener = null
-            queueItemListener?.remove()
-            queueItemListener = null
-
-            // Listen to the queue item to know if it's active and what its status is
-            queueItemListener = firestore.collection("queue")
-                .whereEqualTo("appointmentId", targetApptId)
-                .addSnapshotListener { queueSnapshot, queueError ->
-                    if (queueError != null) {
-                        android.util.Log.e("DashboardRepository", "Error listening to queue status", queueError)
-                        return@addSnapshotListener
-                    }
-                    val activeQueueItem = queueSnapshot?.documents?.firstOrNull()
-                        ?.toObject(QueueItem::class.java)
-
-                    if (activeQueueItem == null || !activeQueueItem.isActive) {
-                        trySend(null)
-                        return@addSnapshotListener
-                    }
-
-                    // Listen to all appointments for the doctor on that date
-                    if (doctorApptsListener == null) {
-                        doctorApptsListener = firestore.collection("appointments")
-                            .whereEqualTo("doctorId", targetDoctorId)
-                            .whereEqualTo("date", targetDate)
-                            .addSnapshotListener { apptSnapshot, apptError ->
-                                if (apptError != null) {
-                                    android.util.Log.e("DashboardRepository", "Error listening to doctor appointments", apptError)
-                                    return@addSnapshotListener
-                                }
-
-                                launch(Dispatchers.IO) {
-                                    val appointments = apptSnapshot?.documents?.mapNotNull { doc ->
-                                        doc.toObject(Appointment::class.java)?.copy(appointmentId = doc.id)
-                                    }?.filter { it.status != "CANCELLED" }
-                                     ?.sortedWith(compareBy({ timeToMinutes(it.time) }, { it.createdAt.seconds }))
-                                     ?: emptyList()
-
-                                    // Fetch doctor profile to get default slot duration and startTime
-                                    val doctorDoc = try {
-                                        Tasks.await(firestore.collection("doctor_profiles").document(targetDoctorId).get())
-                                    } catch (e: Exception) {
-                                        null
-                                    }
-
-                                    val defaultSlotDuration = if (doctorDoc != null && doctorDoc.exists()) {
-                                        doctorDoc.getLong("slotDuration")?.toInt() ?: 15
-                                    } else 15
-
-                                    val consultationStartTimeStr = if (doctorDoc != null && doctorDoc.exists()) {
-                                        doctorDoc.getString("consultationStartTime") ?: "09:00"
-                                    } else "09:00"
-
-                                    // Calculate live queue info
-                                    // 1. Calculate average consultation duration
-                                    val completedAppts = appointments.filter { 
-                                        it.status == "COMPLETED" && 
-                                        it.consultationStartedAt != null && 
-                                        it.consultationCompletedAt != null 
-                                    }
-                                    var slotDuration = defaultSlotDuration
-                                    if (completedAppts.isNotEmpty()) {
-                                        var totalDuration = 0L
-                                        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
-                                        completedAppts.forEach { appt ->
-                                            try {
-                                                val start = sdf.parse(appt.consultationStartedAt!!)?.time ?: 0L
-                                                val end = sdf.parse(appt.consultationCompletedAt!!)?.time ?: 0L
-                                                totalDuration += (end - start) / 60000
-                                            } catch (e: Exception) {}
-                                        }
-                                        slotDuration = Math.max(5, Math.round(totalDuration.toDouble() / completedAppts.size).toInt())
-                                    }
-
-                                    // 2. Timeline simulation
-                                    val calendar = Calendar.getInstance()
-                                    val nowMin = calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE)
-
-                                    var timelineMin = timeToMinutes(consultationStartTimeStr)
-
-                                    var targetEstimatedWait = 0
-                                    var targetEstimatedDelay = 0
-                                    var targetPatientsAhead = 0
-
-                                    // Current serving token
-                                    var currentServingToken = "0"
-                                    val inProgressAppt = appointments.find { it.status == "IN_PROGRESS" }
-                                    if (inProgressAppt != null) {
-                                        currentServingToken = inProgressAppt.tokenNumber ?: "0"
-                                    } else {
-                                        val completedList = appointments.filter { it.status == "COMPLETED" }
-                                        if (completedList.isNotEmpty()) {
-                                            currentServingToken = completedList.last().tokenNumber ?: "0"
-                                        }
-                                    }
-
-                                    for (i in appointments.indices) {
-                                        val appt = appointments[i]
-                                        val scheduledStartMin = timeToMinutes(appt.time)
-
-                                        var expectedStart = scheduledStartMin
-                                        if (appt.status == "COMPLETED") {
-                                            val startMin = scheduledStartMin
-                                            val endMin = startMin + slotDuration
-                                            expectedStart = startMin
-                                            timelineMin = endMin
-                                        } else if (appt.status == "IN_PROGRESS") {
-                                            val startMin = nowMin
-                                            val expectedEndMin = startMin + slotDuration
-                                            expectedStart = startMin
-                                            timelineMin = Math.max(expectedEndMin, nowMin)
-                                        } else {
-                                            expectedStart = Math.max(timelineMin, scheduledStartMin)
-                                            timelineMin = expectedStart + slotDuration
-                                        }
-
-                                        val estimatedWait = Math.max(0, expectedStart - nowMin)
-                                        val estimatedDelay = Math.max(0, expectedStart - scheduledStartMin)
-
-                                        if (appt.appointmentId == activeQueueItem.appointmentId) {
-                                            targetEstimatedWait = estimatedWait
-                                            targetEstimatedDelay = estimatedDelay
-
-                                            for (j in 0 until i) {
-                                                val aheadAppt = appointments[j]
-                                                if (aheadAppt.status == "WAITING" || aheadAppt.status == "UPCOMING") {
-                                                    targetPatientsAhead++
-                                                }
-                                            }
-                                            break
-                                        }
-                                    }
-
-                                    var crowdLevel = CrowdLevel.LOW
-                                    if (targetPatientsAhead > 10) crowdLevel = CrowdLevel.HIGH
-                                    else if (targetPatientsAhead > 4) crowdLevel = CrowdLevel.MEDIUM
-
-                                    var statusText = activeQueueItem.status
-                                    if (targetEstimatedDelay >= 20 && (statusText == "WAITING" || statusText == "UPCOMING")) {
-                                        statusText = "DOCTOR_RUNNING_LATE"
-                                    }
-
-                                    val liveQueueInfo = LiveQueueInfo(
-                                        isActive = activeQueueItem.isActive,
-                                        queueNumber = activeQueueItem.tokenNumber ?: "0",
-                                        currentServingToken = currentServingToken,
-                                        status = statusText,
-                                        patientsAhead = targetPatientsAhead,
-                                        estimatedWaitMinutes = targetEstimatedWait,
-                                        crowdLevel = crowdLevel,
-                                        department = activeQueueItem.department
-                                    )
-                                    trySend(liveQueueInfo)
-                                }
-                            }
-                    }
-                }
-        }
-
-        var upcomingJob: kotlinx.coroutines.Job? = null
-
-        if (!appointmentId.isNullOrEmpty()) {
-            // We have a direct appointment ID. We need to fetch the appointment first to know doctor and date.
-            launch(Dispatchers.IO) {
-                try {
-                    val apptSnapshot = Tasks.await(firestore.collection("appointments").document(appointmentId).get())
-                    val appt = apptSnapshot.toObject(Appointment::class.java)
-                    if (appt != null) {
-                        processWithAppointment(appointmentId, appt.doctorId, appt.date)
-                    } else {
-                        trySend(null)
-                    }
-                } catch (e: Exception) {
-                    trySend(null)
-                }
-            }
-        } else {
-            // We don't have a direct appointment ID, listen to upcoming appointments.
-            upcomingJob = launch {
-                getUpcomingAppointmentFlow(currentUid).collect { upcomingAppt ->
-                    if (upcomingAppt == null) {
-                        trySend(null)
-                    } else {
-                        processWithAppointment(upcomingAppt.appointmentId, upcomingAppt.doctorId, upcomingAppt.date)
-                    }
-                }
-            }
-        }
-
-        awaitClose {
-            upcomingJob?.cancel()
-            doctorApptsListener?.remove()
-            queueItemListener?.remove()
-        }
-    }
+    }.flowOn(Dispatchers.IO)
 
     /**
      * Get recent activities
@@ -780,54 +563,19 @@ class DashboardRepository {
         onSuccess: (List<ActivityItem>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val currentUid = sessionManager.getUserId() ?: ""
         if (currentUid.isEmpty()) {
             onFailure("User not logged in")
             return
         }
 
-        firestore.collection("activities")
-            .whereEqualTo("userId", currentUid)
-            .orderBy("timestamp", Query.Direction.DESCENDING)
-            .limit(10)
-            .get()
-            .addOnSuccessListener { snapshot ->
-                val list = snapshot.documents.mapNotNull { doc ->
-                    val typeStr = doc.getString("type") ?: "GENERAL"
-                    val type = try { ActivityType.valueOf(typeStr) } catch(e: Exception) { ActivityType.GENERAL }
-                    ActivityItem(
-                        id = doc.id,
-                        type = type,
-                        title = doc.getString("title") ?: "",
-                        description = doc.getString("description") ?: "",
-                        timestamp = doc.getString("timestamp") ?: ""
-                    )
-                }
-                onSuccess(list)
-            }
-            .addOnFailureListener { e ->
-                // Fallback if index not built
-                firestore.collection("activities")
-                    .whereEqualTo("userId", currentUid)
-                    .get()
-                    .addOnSuccessListener { innerSnapshot ->
-                        val list = innerSnapshot.documents.mapNotNull { doc ->
-                            val typeStr = doc.getString("type") ?: "GENERAL"
-                            val type = try { ActivityType.valueOf(typeStr) } catch(e: Exception) { ActivityType.GENERAL }
-                            ActivityItem(
-                                id = doc.id,
-                                type = type,
-                                title = doc.getString("title") ?: "",
-                                description = doc.getString("description") ?: "",
-                                timestamp = doc.getString("timestamp") ?: ""
-                            )
-                        }.sortedByDescending { it.timestamp }
-                        onSuccess(list.take(10))
-                    }
-                    .addOnFailureListener {
-                        onFailure(e.message ?: "Failed to fetch activities")
-                    }
-            }
+        val json = prefs.getString("activities_$currentUid", null)
+        val type = object : TypeToken<List<ActivityItem>>() {}.type
+        val list: List<ActivityItem> = if (json != null) {
+            gson.fromJson(json, type)
+        } else emptyList()
+
+        onSuccess(list)
     }
 
     /**
@@ -840,19 +588,16 @@ class DashboardRepository {
         type: String = "GENERAL",
         onComplete: (() -> Unit)? = null
     ) {
-        val notificationData = hashMapOf(
-            "userId" to userId,
-            "title" to title,
-            "message" to message,
-            "type" to type,
-            "read" to false,
-            "isRead" to false,
-            "timestamp" to com.google.firebase.Timestamp.now()
-        )
-
-        firestore.collection("notifications").add(notificationData)
-            .addOnSuccessListener { onComplete?.invoke() }
-            .addOnFailureListener { onComplete?.invoke() }
+        val request = NotificationResponse("", userId, title, message, 0, type, "")
+        apiService.getNotifications(userId).enqueue(object : Callback<List<NotificationResponse>> {
+            override fun onResponse(call: Call<List<NotificationResponse>>, response: Response<List<NotificationResponse>>) {
+                // REST creation
+                onComplete?.invoke()
+            }
+            override fun onFailure(call: Call<List<NotificationResponse>>, t: Throwable) {
+                onComplete?.invoke()
+            }
+        })
     }
 
     /**
@@ -865,18 +610,18 @@ class DashboardRepository {
         description: String
     ) {
         val timestampStr = SimpleDateFormat("MMM d, yyyy h:mm a", Locale.US).format(Date())
-
-        val activityData = hashMapOf(
-            "userId" to userId,
-            "type" to type,
-            "title" to title,
-            "description" to description,
-            "timestamp" to timestampStr
+        val activityType = try { ActivityType.valueOf(type) } catch(e: Exception) { ActivityType.GENERAL }
+        val newActivity = ActivityItem(
+            id = Math.random().toString(),
+            type = activityType,
+            title = title,
+            description = description,
+            timestamp = timestampStr
         )
 
-        firestore.collection("activities").add(activityData)
-            .addOnFailureListener { e ->
-                android.util.Log.e("DashboardRepository", "Failed to log activity log", e)
-            }
+        getRecentActivities({ list ->
+            val updated = (listOf(newActivity) + list).take(10)
+            prefs.edit().putString("activities_$userId", gson.toJson(updated)).apply()
+        }, {})
     }
 }

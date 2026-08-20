@@ -1,42 +1,30 @@
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  setDoc, 
-  updateDoc 
-} from 'firebase/firestore';
-import { auth, db } from '../lib/firebase';
 import { DoctorProfile, QueueItem, User, UserRole } from '../types';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 export const getDoctorProfile = async (): Promise<DoctorProfile> => {
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = localStorage.getItem('medplus_uid');
   if (!currentUid) throw new Error('User not authenticated');
   return getDoctorProfileByUid(currentUid);
 };
 
 export const getDoctorProfileByUid = async (uid: string): Promise<DoctorProfile> => {
-  const docRef = doc(db, 'doctor_profiles', uid);
-  const docSnap = await getDoc(docRef);
-  
-  if (!docSnap.exists()) {
+  const res = await fetch(`${API_BASE_URL}/doctors/${uid}`);
+  if (!res.ok) {
     throw new Error('Doctor profile not found');
   }
-
-  const data = docSnap.data();
+  const data = await res.json();
   return {
-    uid: docSnap.id,
+    uid: data.uid,
     fullName: data.fullName || '',
     email: data.email || '',
     phone: data.phone || '',
     specialization: data.specialization || '',
-    experience: data.experience || 0,
+    experience: data.experienceYears || 0, // Match field name
     department: data.department || '',
     consultationFee: data.consultationFee || 0,
-    clinicName: data.clinicName || '',
-    clinicAddress: data.clinicAddress || '',
+    clinicName: data.clinicName || 'MedPlus Clinic',
+    clinicAddress: data.clinicAddress || 'Clinic Address',
     bio: data.bio || '',
     verificationStatus: data.verificationStatus || 'PENDING',
     workingDays: data.workingDays || [],
@@ -52,153 +40,149 @@ export const getDoctorProfileByUid = async (uid: string): Promise<DoctorProfile>
 };
 
 export const setupDoctorProfile = async (profileData: Partial<DoctorProfile>): Promise<DoctorProfile> => {
-  const currentUid = auth.currentUser?.uid;
-  if (!currentUid) throw new Error('User not authenticated');
+  const currentUid = localStorage.getItem('medplus_uid');
+  const token = localStorage.getItem('medplus_token');
+  if (!currentUid || !token) throw new Error('User not authenticated');
 
-  // Fetch user name
-  const userDoc = await getDoc(doc(db, 'users', currentUid));
-  const userData = userDoc.data() || {};
+  // Fetch standard profile details first to check
+  let existingUser = { fullName: '', email: '', phone: '' };
+  try {
+    const userRes = await fetch(`${API_BASE_URL}/auth/profile/${currentUid}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (userRes.ok) {
+      existingUser = await userRes.json();
+    }
+  } catch (e) {
+    // Ignore
+  }
 
-  const fullProfile: Partial<DoctorProfile> = {
+  const fullProfile = {
     ...profileData,
     uid: currentUid,
-    fullName: userData.fullName || profileData.fullName || '',
-    email: userData.email || profileData.email || '',
-    phone: userData.phone || profileData.phone || '',
+    fullName: existingUser.fullName || profileData.fullName || '',
+    email: existingUser.email || profileData.email || '',
+    phone: existingUser.phone || profileData.phone || '',
+    experienceYears: profileData.experience !== undefined ? profileData.experience : undefined, // Map back
     verificationStatus: 'PENDING'
   };
 
-  await setDoc(doc(db, 'doctor_profiles', currentUid), fullProfile, { merge: true });
+  const res = await fetch(`${API_BASE_URL}/doctors/${currentUid}/profile`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(fullProfile)
+  });
+
+  if (!res.ok) {
+    const errData = await res.json();
+    throw new Error(errData.error || 'Failed to setup doctor profile.');
+  }
+
   return getDoctorProfileByUid(currentUid);
 };
 
 export const getVerifiedDoctors = async (): Promise<DoctorProfile[]> => {
-  const q = query(collection(db, 'doctor_profiles'), where('verificationStatus', '==', 'VERIFIED'));
-  const snapshot = await getDocs(q);
+  const res = await fetch(`${API_BASE_URL}/doctors`);
+  if (!res.ok) throw new Error('Failed to fetch verified doctors.');
+  const list = await res.json();
 
-  return snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      uid: docSnap.id,
-      fullName: data.fullName || '',
-      email: data.email || '',
-      phone: data.phone || '',
-      specialization: data.specialization || '',
-      experience: data.experience || 0,
-      department: data.department || '',
-      consultationFee: data.consultationFee || 0,
-      clinicName: data.clinicName || '',
-      clinicAddress: data.clinicAddress || '',
-      bio: data.bio || '',
-      verificationStatus: data.verificationStatus || 'PENDING',
-      workingDays: data.workingDays || [],
-      consultationStartTime: data.consultationStartTime || '09:00 AM',
-      consultationEndTime: data.consultationEndTime || '05:00 PM',
-      lunchStartTime: data.lunchStartTime || '',
-      lunchEndTime: data.lunchEndTime || '',
-      breakStartTime: data.breakStartTime || '',
-      breakEndTime: data.breakEndTime || '',
-      slotDuration: data.slotDuration || 15,
-      profileImage: data.profileImage || ''
-    };
-  });
+  return list.map((data: any) => ({
+    uid: data.uid,
+    fullName: data.fullName || '',
+    email: data.email || '',
+    phone: data.phone || '',
+    specialization: data.specialization || '',
+    experience: data.experienceYears || 0,
+    department: data.department || '',
+    consultationFee: data.consultationFee || 0,
+    clinicName: data.clinicName || 'MedPlus Clinic',
+    clinicAddress: data.clinicAddress || 'Clinic Address',
+    bio: data.bio || '',
+    verificationStatus: data.verificationStatus || 'PENDING',
+    workingDays: data.workingDays || [],
+    consultationStartTime: data.consultationStartTime || '09:00 AM',
+    consultationEndTime: data.consultationEndTime || '05:00 PM',
+    lunchStartTime: data.lunchStartTime || '',
+    lunchEndTime: data.lunchEndTime || '',
+    breakStartTime: data.breakStartTime || '',
+    breakEndTime: data.breakEndTime || '',
+    slotDuration: data.slotDuration || 15,
+    profileImage: data.profileImage || ''
+  }));
 };
 
 export const updateAvailability = async (availabilityData: Partial<DoctorProfile>): Promise<DoctorProfile> => {
-  const currentUid = auth.currentUser?.uid;
-  if (!currentUid) throw new Error('User not authenticated');
+  const currentUid = localStorage.getItem('medplus_uid');
+  const token = localStorage.getItem('medplus_token');
+  if (!currentUid || !token) throw new Error('User not authenticated');
 
-  await setDoc(doc(db, 'doctor_profiles', currentUid), availabilityData, { merge: true });
+  const res = await fetch(`${API_BASE_URL}/doctors/${currentUid}/profile`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(availabilityData)
+  });
+
+  if (!res.ok) {
+    const errData = await res.json();
+    throw new Error(errData.error || 'Failed to update availability.');
+  }
+
   return getDoctorProfileByUid(currentUid);
 };
 
 export const getDoctorQueue = async (date?: string): Promise<QueueItem[]> => {
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = localStorage.getItem('medplus_uid');
   if (!currentUid) return [];
 
-  let q = query(collection(db, 'queue'), where('doctorId', '==', currentUid));
+  let url = `${API_BASE_URL}/queue?doctorId=${currentUid}`;
   if (date) {
-    q = query(collection(db, 'queue'), where('doctorId', '==', currentUid), where('date', '==', date));
+    url += `&date=${encodeURIComponent(date)}`;
   }
-  
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      _id: docSnap.id,
-      queueId: docSnap.id,
-      appointmentId: data.appointmentId || '',
-      doctorId: data.doctorId || '',
-      patientId: data.patientId || '',
-      patientName: data.patientName || '',
-      tokenNumber: data.tokenNumber || '',
-      status: data.status || 'WAITING',
-      department: data.department || '',
-      date: data.date || '',
-      isActive: data.isActive !== undefined ? data.isActive : true,
-      estimatedWaitMinutes: data.estimatedWaitMinutes || 0
-    };
-  });
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Failed to fetch doctor queue.');
+  return await res.json();
 };
 
 export const updateQueueStatus = async (queueId: string, newStatus: string): Promise<QueueItem> => {
-  const docRef = doc(db, 'queue', queueId);
-  const isActive = !(newStatus === 'COMPLETED' || newStatus === 'CANCELLED');
-  
-  await updateDoc(docRef, { 
-    status: newStatus,
-    isActive: isActive
+  const token = localStorage.getItem('medplus_token');
+  const res = await fetch(`${API_BASE_URL}/queue/${queueId}/status`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({ status: newStatus })
   });
 
-  const updatedSnap = await getDoc(docRef);
-  const data = updatedSnap.data() || {};
-  return {
-    _id: docRef.id,
-    queueId: docRef.id,
-    appointmentId: data.appointmentId || '',
-    doctorId: data.doctorId || '',
-    patientId: data.patientId || '',
-    patientName: data.patientName || '',
-    tokenNumber: data.tokenNumber || '',
-    status: newStatus,
-    department: data.department || '',
-    date: data.date || '',
-    isActive: isActive,
-    estimatedWaitMinutes: data.estimatedWaitMinutes || 0
-  };
+  if (!res.ok) {
+    const errData = await res.json();
+    throw new Error(errData.error || 'Failed to update queue status.');
+  }
+
+  return await res.json();
 };
 
 export const getDoctorPatients = async (): Promise<User[]> => {
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = localStorage.getItem('medplus_uid');
   if (!currentUid) return [];
 
-  // Fetch doctor's appointments
-  const apptsSnapshot = await getDocs(
-    query(collection(db, 'appointments'), where('doctorId', '==', currentUid))
-  );
+  const res = await fetch(`${API_BASE_URL}/doctors/patients/${currentUid}`);
+  if (!res.ok) throw new Error('Failed to fetch doctor patients.');
+  const list = await res.json();
 
-  const patientIds = Array.from(new Set(apptsSnapshot.docs.map(docSnap => docSnap.data().patientId).filter(Boolean)));
-  if (patientIds.length === 0) return [];
-
-  const users: User[] = [];
-  // Chunk queries by 10 (Firestore limit for `in` operator)
-  for (let i = 0; i < patientIds.length; i += 10) {
-    const chunk = patientIds.slice(i, i + 10);
-    const usersSnapshot = await getDocs(
-      query(collection(db, 'users'), where('uid', 'in', chunk))
-    );
-    usersSnapshot.docs.forEach(docSnap => {
-      const data = docSnap.data();
-      users.push({
-        uid: docSnap.id,
-        fullName: data.fullName || '',
-        email: data.email || '',
-        phone: data.phone || '',
-        role: (data.role || 'PATIENT') as UserRole,
-        profileImage: data.profileImage || ''
-      });
-    });
-  }
-
-  return users;
+  return list.map((data: any) => ({
+    uid: data.uid,
+    fullName: data.fullName || '',
+    email: data.email || '',
+    phone: data.phone || '',
+    role: (data.role || 'PATIENT') as UserRole,
+    profileImage: data.profileImage || ''
+  }));
 };

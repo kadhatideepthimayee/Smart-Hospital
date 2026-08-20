@@ -1,15 +1,6 @@
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  addDoc, 
-  Timestamp 
-} from 'firebase/firestore';
-import { auth, db } from '../lib/firebase';
 import { MedicalRecord } from '../types';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export const createMedicalRecord = async (recordData: {
   patientId: string;
@@ -19,86 +10,70 @@ export const createMedicalRecord = async (recordData: {
   notes?: string;
   followUpDate?: string;
 }): Promise<MedicalRecord> => {
-  const currentUid = auth.currentUser?.uid;
-  if (!currentUid) throw new Error('User not authenticated');
-
-  // 1. Fetch appointment details
-  const apptSnap = await getDoc(doc(db, 'appointments', recordData.appointmentId));
-  if (!apptSnap.exists()) throw new Error('Appointment not found');
-  const appointment = apptSnap.data();
-
-  const createdAtStr = new Date().toISOString();
-
-  // 2. Save Medical Record
-  const newRecord = {
-    patientId: recordData.patientId,
-    patientName: appointment.patientName || 'Patient',
-    doctorId: currentUid,
-    doctorName: appointment.doctorName || 'Doctor',
-    appointmentId: recordData.appointmentId,
-    diagnosis: recordData.diagnosis,
-    prescription: recordData.prescription,
-    notes: recordData.notes || '',
-    followUpDate: recordData.followUpDate || '',
-    createdAt: createdAtStr
-  };
-
-  const docRef = await addDoc(collection(db, 'medical_records'), newRecord);
-
-  // 3. Send notification to patient
-  await addDoc(collection(db, 'notifications'), {
-    userId: recordData.patientId,
-    title: 'New Medical Record Available',
-    message: `Dr. ${appointment.doctorName} has added a medical record for your consultation.`,
-    type: 'MEDICAL_RECORD',
-    isRead: false,
-    timestamp: Timestamp.now()
+  const token = localStorage.getItem('medplus_token');
+  const res = await fetch(`${API_BASE_URL}/medical-records`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(recordData)
   });
 
+  if (!res.ok) {
+    const errData = await res.json();
+    throw new Error(errData.error || 'Failed to create medical record.');
+  }
+
+  const data = await res.json();
   return {
-    _id: docRef.id,
-    recordId: docRef.id,
-    ...newRecord
+    _id: data.id,
+    recordId: data.id,
+    patientId: data.patientId,
+    patientName: data.patientName || '',
+    doctorId: data.doctorId || '',
+    doctorName: data.doctorName || '',
+    appointmentId: data.appointmentId || '',
+    diagnosis: data.diagnosis || '',
+    prescription: data.prescription || '',
+    notes: data.notes || '',
+    followUpDate: data.followUpDate || '',
+    createdAt: data.createdAt || ''
   };
 };
 
 export const getPatientMedicalRecords = async (): Promise<MedicalRecord[]> => {
-  const currentUid = auth.currentUser?.uid;
+  const currentUid = localStorage.getItem('medplus_uid');
   if (!currentUid) return [];
 
-  const q = query(collection(db, 'medical_records'), where('patientId', '==', currentUid));
-  const snapshot = await getDocs(q);
+  const res = await fetch(`${API_BASE_URL}/medical-records/patient/${currentUid}`);
+  if (!res.ok) throw new Error('Failed to fetch patient medical records.');
+  const list = await res.json();
 
-  const list = snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      _id: docSnap.id,
-      recordId: docSnap.id,
-      patientId: data.patientId || '',
-      patientName: data.patientName || '',
-      doctorId: data.doctorId || '',
-      doctorName: data.doctorName || '',
-      appointmentId: data.appointmentId || '',
-      diagnosis: data.diagnosis || '',
-      prescription: data.prescription || '',
-      notes: data.notes || '',
-      followUpDate: data.followUpDate || '',
-      createdAt: data.createdAt || ''
-    };
-  });
-  
-  // Sort descending by creation date
-  return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return list.map((data: any) => ({
+    _id: data.id,
+    recordId: data.id,
+    patientId: data.patientId || '',
+    patientName: data.patientName || '',
+    doctorId: data.doctorId || '',
+    doctorName: data.doctorName || '',
+    appointmentId: data.appointmentId || '',
+    diagnosis: data.diagnosis || '',
+    prescription: data.prescription || '',
+    notes: data.notes || '',
+    followUpDate: data.followUpDate || '',
+    createdAt: data.createdAt || ''
+  }));
 };
 
 export const getMedicalRecordById = async (id: string): Promise<MedicalRecord> => {
-  const docSnap = await getDoc(doc(db, 'medical_records', id));
-  if (!docSnap.exists()) throw new Error('Medical record not found');
+  const res = await fetch(`${API_BASE_URL}/medical-records/${id}`);
+  if (!res.ok) throw new Error('Medical record not found');
+  const data = await res.json();
 
-  const data = docSnap.data();
   return {
-    _id: docSnap.id,
-    recordId: docSnap.id,
+    _id: data.id,
+    recordId: data.id,
     patientId: data.patientId || '',
     patientName: data.patientName || '',
     doctorId: data.doctorId || '',

@@ -155,8 +155,8 @@ class BookAppointmentViewModel : ViewModel() {
      * Fetches doctors from Firestore based on the selected department.
      */
     fun fetchDoctors(department: String = "") {
-        val currentUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
-        if (currentUser == null) {
+        val currentUserUid = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId()
+        if (currentUserUid == null) {
             _uiState.update { it.copy(
                 errorMessage = "Please sign in to view available doctors.",
                 isLoading = false
@@ -168,7 +168,7 @@ class BookAppointmentViewModel : ViewModel() {
         _uiState.update { it.copy(isLoading = true, doctors = emptyList(), errorMessage = null) }
 
         Log.d("BOOK_APPOINTMENT_DEBUG", "ViewModel fetchDoctors called for department: $department")
-        Log.d("BOOK_APPOINTMENT_DEBUG", "Current User UID: ${currentUser.uid}")
+        Log.d("BOOK_APPOINTMENT_DEBUG", "Current User UID: $currentUserUid")
 
         repository.getDoctorsByDepartment(
             department = department,
@@ -385,11 +385,15 @@ class BookAppointmentViewModel : ViewModel() {
         firestore.collection("appointments")
             .whereEqualTo("doctorId", doctorId)
             .whereEqualTo("date", date)
-            .whereEqualTo("status", "UPCOMING")
             .get()
             .addOnSuccessListener { querySnapshot ->
                 val booked = querySnapshot.documents.mapNotNull { doc ->
-                    doc.getString("time")
+                    val status = doc.getString("status") ?: ""
+                    if (status != "CANCELLED") {
+                        doc.getString("time")
+                    } else {
+                        null
+                    }
                 }
                 onResult(booked)
             }
@@ -404,7 +408,7 @@ class BookAppointmentViewModel : ViewModel() {
         val date = state.selectedDate?.fullDate ?: return
         val time = state.selectedTime
         val department = state.selectedDepartment
-        val patientId = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val patientId = com.example.medplus.data.network.SessionManager.getInstance(com.google.firebase.FirebaseApp.getInstance().applicationContext).getUserId() ?: ""
 
         Log.d("APPOINTMENT_BOOKING_DEBUG", "--- STARTING BOOKING PROCESS ---")
         Log.d("APPOINTMENT_BOOKING_DEBUG", "Patient UID: $patientId")

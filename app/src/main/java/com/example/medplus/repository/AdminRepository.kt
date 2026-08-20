@@ -1,16 +1,18 @@
 package com.example.medplus.repository
 
+import android.content.Context
 import com.example.medplus.model.AdminNotification
 import com.example.medplus.model.DoctorProfile
-import com.google.firebase.firestore.FirebaseFirestore
+import com.example.medplus.data.network.*
 import com.google.firebase.Timestamp
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
 
-/**
- * Repository to handle admin-related data operations in Firestore.
- */
 class AdminRepository {
 
-    private val firestore: FirebaseFirestore get() = FirebaseFirestore.getInstance()
+    private val context = com.google.firebase.FirebaseApp.getInstance().applicationContext
+    private val apiService: ApiService get() = RetrofitClient.getClient(context)
 
     /**
      * Fetches admin notifications.
@@ -19,17 +21,30 @@ class AdminRepository {
         onSuccess: (List<AdminNotification>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("admin_notifications")
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                val list = querySnapshot.documents.mapNotNull { doc ->
-                    doc.toObject(AdminNotification::class.java)?.copy(id = doc.id)
+        apiService.getNotifications("ADMIN").enqueue(object : Callback<List<NotificationResponse>> {
+            override fun onResponse(call: Call<List<NotificationResponse>>, response: Response<List<NotificationResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!.map { body ->
+                        AdminNotification(
+                            id = body.id,
+                            doctorId = body.doctorId ?: "",
+                            title = body.title,
+                            message = body.message,
+                            type = body.type ?: "GENERAL",
+                            isRead = body.read == 1,
+                            timestamp = Timestamp.now()
+                        )
+                    }
+                    onSuccess(list)
+                } else {
+                    onSuccess(emptyList())
                 }
-                onSuccess(list)
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch notifications")
+
+            override fun onFailure(call: Call<List<NotificationResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching admin notifications")
             }
+        })
     }
 
     /**
@@ -40,23 +55,26 @@ class AdminRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("admin_notifications").document(id)
-            .delete()
-            .addOnSuccessListener { onSuccess() }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to delete notification")
+        apiService.deleteNotification(id).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to delete notification")
             }
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error deleting notification")
+            }
+        })
     }
 
     /**
      * Marks a notification as read.
      */
     fun markNotificationAsRead(id: String) {
-        firestore.collection("admin_notifications").document(id)
-            .update("isRead", true)
-            .addOnFailureListener { e ->
-                android.util.Log.e("AdminRepository", "Failed to mark notification read", e)
-            }
+        apiService.markNotificationAsRead(id).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {}
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {}
+        })
     }
 
     /**
@@ -65,15 +83,20 @@ class AdminRepository {
     fun getUnreadNotificationCount(
         onSuccess: (Int) -> Unit
     ) {
-        firestore.collection("admin_notifications")
-            .whereEqualTo("isRead", false)
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                onSuccess(querySnapshot.size())
+        apiService.getNotifications("ADMIN").enqueue(object : Callback<List<NotificationResponse>> {
+            override fun onResponse(call: Call<List<NotificationResponse>>, response: Response<List<NotificationResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val count = response.body()!!.count { it.read == 0 }
+                    onSuccess(count)
+                } else {
+                    onSuccess(0)
+                }
             }
-            .addOnFailureListener {
+
+            override fun onFailure(call: Call<List<NotificationResponse>>, t: Throwable) {
                 onSuccess(0)
             }
+        })
     }
 
     /**
@@ -84,18 +107,47 @@ class AdminRepository {
         onSuccess: (List<DoctorProfile>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("doctor_profiles")
-            .whereEqualTo("verificationStatus", status)
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                val list = querySnapshot.documents.mapNotNull { doc ->
-                    doc.toObject(DoctorProfile::class.java)
+        apiService.getPendingDoctors().enqueue(object : Callback<List<DoctorProfileResponse>> {
+            override fun onResponse(call: Call<List<DoctorProfileResponse>>, response: Response<List<DoctorProfileResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!.map { body ->
+                        DoctorProfile(
+                            uid = body.uid,
+                            fullName = body.fullName,
+                            email = body.email,
+                            phone = body.phone ?: "",
+                            qualification = body.qualification ?: "",
+                            department = body.department ?: "",
+                            specialization = body.specialization ?: "",
+                            experienceYears = body.experienceYears ?: 0,
+                            registrationAuthority = body.registrationAuthority ?: "",
+                            registrationNumber = body.registrationNumber ?: "",
+                            consultationFee = body.consultationFee ?: 0.0,
+                            bio = body.bio ?: "",
+                            profileImage = body.profileImage ?: "",
+                            registrationCertificateUrl = body.registrationCertificateUrl ?: "",
+                            verificationDocumentUrl = body.verificationDocumentUrl ?: "",
+                            workingDays = body.workingDays ?: emptyList(),
+                            consultationStartTime = body.consultationStartTime ?: "",
+                            consultationEndTime = body.consultationEndTime ?: "",
+                            lunchStartTime = body.lunchStartTime ?: "",
+                            lunchEndTime = body.lunchEndTime ?: "",
+                            breakStartTime = body.breakStartTime ?: "",
+                            breakEndTime = body.breakEndTime ?: "",
+                            slotDuration = body.slotDuration ?: 15,
+                            verificationStatus = body.verificationStatus ?: "PENDING"
+                        )
+                    }.filter { it.verificationStatus == status }
+                    onSuccess(list)
+                } else {
+                    onSuccess(emptyList())
                 }
-                onSuccess(list)
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch doctors")
+
+            override fun onFailure(call: Call<List<DoctorProfileResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching doctors")
             }
+        })
     }
 
     /**
@@ -105,17 +157,47 @@ class AdminRepository {
         onSuccess: (List<DoctorProfile>) -> Unit,
         onFailure: (String) -> Unit
     ) {
-        firestore.collection("doctor_profiles")
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                val list = querySnapshot.documents.mapNotNull { doc ->
-                    doc.toObject(DoctorProfile::class.java)
+        apiService.getAdminDoctors().enqueue(object : Callback<List<DoctorProfileResponse>> {
+            override fun onResponse(call: Call<List<DoctorProfileResponse>>, response: Response<List<DoctorProfileResponse>>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val list = response.body()!!.map { body ->
+                        DoctorProfile(
+                            uid = body.uid,
+                            fullName = body.fullName,
+                            email = body.email,
+                            phone = body.phone ?: "",
+                            qualification = body.qualification ?: "",
+                            department = body.department ?: "",
+                            specialization = body.specialization ?: "",
+                            experienceYears = body.experienceYears ?: 0,
+                            registrationAuthority = body.registrationAuthority ?: "",
+                            registrationNumber = body.registrationNumber ?: "",
+                            consultationFee = body.consultationFee ?: 0.0,
+                            bio = body.bio ?: "",
+                            profileImage = body.profileImage ?: "",
+                            registrationCertificateUrl = body.registrationCertificateUrl ?: "",
+                            verificationDocumentUrl = body.verificationDocumentUrl ?: "",
+                            workingDays = body.workingDays ?: emptyList(),
+                            consultationStartTime = body.consultationStartTime ?: "",
+                            consultationEndTime = body.consultationEndTime ?: "",
+                            lunchStartTime = body.lunchStartTime ?: "",
+                            lunchEndTime = body.lunchEndTime ?: "",
+                            breakStartTime = body.breakStartTime ?: "",
+                            breakEndTime = body.breakEndTime ?: "",
+                            slotDuration = body.slotDuration ?: 15,
+                            verificationStatus = body.verificationStatus ?: "PENDING"
+                        )
+                    }
+                    onSuccess(list)
+                } else {
+                    onSuccess(emptyList())
                 }
-                onSuccess(list)
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to fetch doctors")
+
+            override fun onFailure(call: Call<List<DoctorProfileResponse>>, t: Throwable) {
+                onFailure(t.message ?: "Network error fetching all doctor profiles")
             }
+        })
     }
 
     /**
@@ -129,41 +211,21 @@ class AdminRepository {
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val updates = hashMapOf(
-            "verificationStatus" to newStatus,
-            "reviewedAt" to Timestamp.now(),
-            "reviewedBy" to adminUid
+        val request = VerifyDoctorRequest(
+            status = newStatus,
+            rejectionReason = rejectionReason ?: "",
+            reviewedBy = adminUid
         )
-        if (rejectionReason != null) {
-            updates["rejectionReason"] = rejectionReason
-        }
 
-        firestore.collection("doctor_profiles").document(uid)
-            .update(updates as Map<String, Any>)
-            .addOnSuccessListener {
-                val title = "Verification Status Updated"
-                val message = if (newStatus == "VERIFIED" || newStatus == "APPROVED") {
-                    "Congratulations! Your professional profile has been verified by the administrator."
-                } else {
-                    "Your professional profile was rejected. Reason: ${rejectionReason ?: "Invalid credentials"}."
-                }
-
-                val notificationMap = hashMapOf(
-                    "userId" to uid,
-                    "title" to title,
-                    "message" to message,
-                    "type" to "VERIFICATION",
-                    "isRead" to false,
-                    "timestamp" to Timestamp.now()
-                )
-
-                firestore.collection("notifications")
-                    .add(notificationMap)
-                    .addOnSuccessListener { onSuccess() }
-                    .addOnFailureListener { onSuccess() }
+        apiService.verifyDoctor(uid, request).enqueue(object : Callback<MsgResponse> {
+            override fun onResponse(call: Call<MsgResponse>, response: Response<MsgResponse>) {
+                if (response.isSuccessful) onSuccess()
+                else onFailure(response.errorBody()?.string() ?: "Failed to update verification status")
             }
-            .addOnFailureListener { e ->
-                onFailure(e.message ?: "Failed to update status")
+
+            override fun onFailure(call: Call<MsgResponse>, t: Throwable) {
+                onFailure(t.message ?: "Network error updating verification status")
             }
+        })
     }
 }

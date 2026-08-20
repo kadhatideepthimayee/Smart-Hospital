@@ -1,74 +1,63 @@
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  updateDoc, 
-  deleteDoc, 
-  addDoc, 
-  serverTimestamp,
-  Timestamp 
-} from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { DoctorProfile, Notification, User, Appointment, UserRole } from '../types';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 export const getPendingDoctors = async (status?: string): Promise<DoctorProfile[]> => {
-  let q = query(collection(db, 'doctor_profiles'));
+  let url = `${API_BASE_URL}/admin/pending-doctors`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Failed to fetch pending doctors.');
+  const list = await res.json();
+
+  const formatted = list.map((data: any) => ({
+    uid: data.uid,
+    fullName: data.fullName || '',
+    email: data.email || '',
+    phone: data.phone || '',
+    specialization: data.specialization || '',
+    experience: data.experienceYears || 0,
+    department: data.department || '',
+    consultationFee: data.consultationFee || 0,
+    clinicName: data.clinicName || 'MedPlus Clinic',
+    clinicAddress: data.clinicAddress || 'Clinic Address',
+    bio: data.bio || '',
+    verificationStatus: data.verificationStatus || 'PENDING',
+    workingDays: data.workingDays || [],
+    consultationStartTime: data.consultationStartTime || '09:00 AM',
+    consultationEndTime: data.consultationEndTime || '05:00 PM',
+    slotDuration: data.slotDuration || 15,
+    profileImage: data.profileImage || ''
+  }));
+
   if (status) {
-    q = query(collection(db, 'doctor_profiles'), where('verificationStatus', '==', status));
+    return formatted.filter((doc: any) => doc.verificationStatus === status);
   }
-  
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      uid: docSnap.id,
-      fullName: data.fullName || '',
-      email: data.email || '',
-      phone: data.phone || '',
-      specialization: data.specialization || '',
-      experience: data.experience || 0,
-      department: data.department || '',
-      consultationFee: data.consultationFee || 0,
-      clinicName: data.clinicName || '',
-      clinicAddress: data.clinicAddress || '',
-      bio: data.bio || '',
-      verificationStatus: data.verificationStatus || 'PENDING',
-      workingDays: data.workingDays || [],
-      consultationStartTime: data.consultationStartTime || '09:00 AM',
-      consultationEndTime: data.consultationEndTime || '05:00 PM',
-      slotDuration: data.slotDuration || 15,
-      profileImage: data.profileImage || ''
-    };
-  });
+  return formatted;
 };
 
 export const getAllDoctors = async (): Promise<DoctorProfile[]> => {
-  const snapshot = await getDocs(collection(db, 'doctor_profiles'));
-  return snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      uid: docSnap.id,
-      fullName: data.fullName || '',
-      email: data.email || '',
-      phone: data.phone || '',
-      specialization: data.specialization || '',
-      experience: data.experience || 0,
-      department: data.department || '',
-      consultationFee: data.consultationFee || 0,
-      clinicName: data.clinicName || '',
-      clinicAddress: data.clinicAddress || '',
-      bio: data.bio || '',
-      verificationStatus: data.verificationStatus || 'PENDING',
-      workingDays: data.workingDays || [],
-      consultationStartTime: data.consultationStartTime || '09:00 AM',
-      consultationEndTime: data.consultationEndTime || '05:00 PM',
-      slotDuration: data.slotDuration || 15,
-      profileImage: data.profileImage || ''
-    };
-  });
+  const res = await fetch(`${API_BASE_URL}/admin/doctors`);
+  if (!res.ok) throw new Error('Failed to fetch all doctors.');
+  const list = await res.json();
+
+  return list.map((data: any) => ({
+    uid: data.uid,
+    fullName: data.fullName || '',
+    email: data.email || '',
+    phone: data.phone || '',
+    specialization: data.specialization || '',
+    experience: data.experienceYears || 0,
+    department: data.department || '',
+    consultationFee: data.consultationFee || 0,
+    clinicName: data.clinicName || 'MedPlus Clinic',
+    clinicAddress: data.clinicAddress || 'Clinic Address',
+    bio: data.bio || '',
+    verificationStatus: data.verificationStatus || 'PENDING',
+    workingDays: data.workingDays || [],
+    consultationStartTime: data.consultationStartTime || '09:00 AM',
+    consultationEndTime: data.consultationEndTime || '05:00 PM',
+    slotDuration: data.slotDuration || 15,
+    profileImage: data.profileImage || ''
+  }));
 };
 
 export const verifyDoctor = async (
@@ -76,115 +65,108 @@ export const verifyDoctor = async (
   newStatus: 'VERIFIED' | 'APPROVED' | 'REJECTED',
   rejectionReason?: string
 ): Promise<{ msg: string }> => {
-  const docRef = doc(db, 'doctor_profiles', doctorId);
-  
-  const updates: Record<string, any> = {
-    verificationStatus: newStatus,
-    reviewedAt: serverTimestamp()
-  };
-  if (rejectionReason) {
-    updates.rejectionReason = rejectionReason;
-  }
-  
-  await updateDoc(docRef, updates);
-
-  // Send doctor a notification
-  const title = "Verification Status Updated";
-  const message = newStatus === 'REJECTED'
-    ? `Your professional profile was rejected. Reason: ${rejectionReason || "Invalid credentials"}`
-    : `Congratulations! Your professional profile has been verified. You can now consult patients.`;
-
-  await addDoc(collection(db, 'notifications'), {
-    userId: doctorId,
-    title,
-    message,
-    type: 'VERIFICATION',
-    isRead: false,
-    timestamp: Timestamp.now()
+  const token = localStorage.getItem('medplus_token');
+  const res = await fetch(`${API_BASE_URL}/admin/verify-doctor/${doctorId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({
+      status: newStatus,
+      rejectionReason: rejectionReason || '',
+      reviewedBy: 'ADMIN'
+    })
   });
+
+  if (!res.ok) {
+    const errData = await res.json();
+    throw new Error(errData.error || 'Failed to verify doctor.');
+  }
 
   return { msg: 'Doctor verification status updated successfully.' };
 };
 
 export const getAdminNotifications = async (): Promise<Notification[]> => {
-  const snapshot = await getDocs(collection(db, 'admin_notifications'));
-  return snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      userId: data.userId || 'ADMIN',
-      title: data.title || '',
-      message: data.message || '',
-      type: data.type || 'GENERAL',
-      isRead: data.isRead !== undefined ? data.isRead : false,
-      timestamp: data.timestamp ? new Date(data.timestamp.seconds * 1000).toLocaleString() : ''
-    };
-  });
+  const res = await fetch(`${API_BASE_URL}/notifications/ADMIN`);
+  if (!res.ok) throw new Error('Failed to fetch admin notifications.');
+  const list = await res.json();
+
+  return list.map((data: any) => ({
+    id: data.id,
+    userId: 'ADMIN',
+    doctorId: data.doctorId || '',
+    title: data.title || '',
+    message: data.message || '',
+    type: data.type || 'GENERAL',
+    isRead: data.read === 1,
+    timestamp: data.createdAt ? new Date(data.createdAt).toLocaleString() : ''
+  }));
 };
 
 export const deleteAdminNotification = async (id: string): Promise<{ msg: string }> => {
-  await deleteDoc(doc(db, 'admin_notifications', id));
+  const token = localStorage.getItem('medplus_token');
+  await fetch(`${API_BASE_URL}/notifications/${id}`, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
   return { msg: 'Admin notification deleted.' };
 };
 
 export const markAdminNotificationRead = async (id: string): Promise<Notification> => {
-  const docRef = doc(db, 'admin_notifications', id);
-  await updateDoc(docRef, { isRead: true });
+  const token = localStorage.getItem('medplus_token');
+  const res = await fetch(`${API_BASE_URL}/notifications/${id}/read`, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+
+  if (!res.ok) throw new Error('Failed to mark notification read');
   
-  const updatedSnap = await getDoc(docRef);
-  const data = updatedSnap.data() || {};
-  return {
-    id,
-    userId: data.userId || 'ADMIN',
-    title: data.title || '',
-    message: data.message || '',
-    type: data.type || 'GENERAL',
-    isRead: true,
-    timestamp: data.timestamp ? new Date(data.timestamp.seconds * 1000).toLocaleString() : ''
-  };
+  const list = await getAdminNotifications();
+  const updated = list.find(n => n.id === id);
+  if (!updated) throw new Error('Notification not found');
+  return updated;
 };
 
 export const getAdminUnreadCount = async (): Promise<{ count: number }> => {
-  const snapshot = await getDocs(
-    query(collection(db, 'admin_notifications'), where('isRead', '==', false))
-  );
-  return { count: snapshot.size };
+  const list = await getAdminNotifications();
+  const unread = list.filter(n => !n.isRead);
+  return { count: unread.length };
 };
 
 export const getAdminPatients = async (): Promise<User[]> => {
-  const q = query(collection(db, 'users'), where('role', '==', 'PATIENT'));
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      uid: docSnap.id,
-      fullName: data.fullName || '',
-      email: data.email || '',
-      phone: data.phone || '',
-      role: 'PATIENT' as UserRole,
-      profileImage: data.profileImage || ''
-    };
-  });
+  const res = await fetch(`${API_BASE_URL}/admin/patients`);
+  if (!res.ok) throw new Error('Failed to fetch admin patients.');
+  const list = await res.json();
+
+  return list.map((data: any) => ({
+    uid: data.uid,
+    fullName: data.fullName || '',
+    email: data.email || '',
+    phone: data.phone || '',
+    role: 'PATIENT' as UserRole,
+    profileImage: data.profileImage || ''
+  }));
 };
 
 export const getAdminAppointments = async (): Promise<Appointment[]> => {
-  const snapshot = await getDocs(collection(db, 'appointments'));
-  return snapshot.docs.map(docSnap => {
-    const data = docSnap.data();
-    return {
-      _id: docSnap.id,
-      appointmentId: docSnap.id,
-      patientId: data.patientId || '',
-      patientName: data.patientName || '',
-      doctorId: data.doctorId || '',
-      doctorName: data.doctorName || '',
-      department: data.department || '',
-      date: data.date || '',
-      time: data.time || '',
-      status: data.status || 'UPCOMING',
-      tokenNumber: data.tokenNumber || null,
-      consultationStartedAt: data.consultationStartedAt || null,
-      consultationCompletedAt: data.consultationCompletedAt || null
-    };
-  });
+  const res = await fetch(`${API_BASE_URL}/admin/appointments`);
+  if (!res.ok) throw new Error('Failed to fetch admin appointments.');
+  const list = await res.json();
+
+  return list.map((data: any) => ({
+    _id: data.id,
+    appointmentId: data.id,
+    patientId: data.patientId || '',
+    patientName: data.patientName || '',
+    doctorId: data.doctorId || '',
+    doctorName: data.doctorName || '',
+    department: data.department || '',
+    date: data.date || '',
+    time: data.time || '',
+    status: data.status || 'PENDING',
+    tokenNumber: data.tokenNumber || null,
+    consultationStartedAt: null,
+    consultationCompletedAt: null
+  }));
 };

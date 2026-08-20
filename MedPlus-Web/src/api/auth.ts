@@ -1,39 +1,55 @@
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth, db } from '../lib/firebase';
 import { User, UserRole } from '../types';
 
-export const updateProfile = async (fullName: string, phone: string): Promise<User> => {
-  const currentUid = auth.currentUser?.uid;
-  if (!currentUid) throw new Error('No authenticated user found');
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
-  const userDocRef = doc(db, 'users', currentUid);
-  await updateDoc(userDocRef, { fullName, phone });
-  
-  const userSnapshot = await getDoc(userDocRef);
-  const userData = userSnapshot.data();
-  
+export const updateProfile = async (fullName: string, phone: string): Promise<User> => {
+  const currentUid = localStorage.getItem('medplus_uid');
+  const token = localStorage.getItem('medplus_token');
+  if (!currentUid || !token) throw new Error('No authenticated user found');
+
+  const res = await fetch(`${API_BASE_URL}/auth/profile/${currentUid}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({ fullName, phone })
+  });
+
+  if (!res.ok) {
+    const errData = await res.json();
+    throw new Error(errData.error || 'Failed to update profile.');
+  }
+
+  // Fetch updated profile
+  const profileRes = await fetch(`${API_BASE_URL}/auth/profile/${currentUid}`, {
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+
+  if (!profileRes.ok) throw new Error('Failed to retrieve updated profile');
+  const userData = await profileRes.json();
+
   return {
-    uid: currentUid,
-    fullName: userData?.fullName || fullName,
-    email: userData?.email || auth.currentUser?.email || '',
-    phone: userData?.phone || phone,
-    role: (userData?.role || 'PATIENT') as UserRole,
-    profileImage: userData?.profileImage || ''
+    uid: userData.uid,
+    fullName: userData.fullName,
+    email: userData.email,
+    phone: userData.phone,
+    role: userData.role as UserRole,
+    profileImage: userData.profileImage || ''
   };
 };
 
 export const forgotPassword = async (email: string): Promise<{ msg: string; debugPin?: string }> => {
-  await sendPasswordResetEmail(auth, email);
-  return { msg: 'Password reset email sent. Please check your inbox.' };
+  // Local backend stub: Return a simple dummy message for demonstration
+  return { msg: 'Password reset request received. On the local backend, you can directly log in with your credentials.' };
 };
 
 export const verifyResetCode = async (_email: string, _code: string): Promise<{ msg: string }> => {
-  // Bypassed for Firebase since Firebase sends a direct link for password reset
   return { msg: 'Reset code successfully verified.' };
 };
 
 export const resetPassword = async (_email: string, _code: string, _newPassword: string): Promise<{ msg: string }> => {
-  // Bypassed for Firebase since the user resets password securely via Firebase-sent link
   return { msg: 'Password has been reset successfully.' };
 };
