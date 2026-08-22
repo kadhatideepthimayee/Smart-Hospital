@@ -16,7 +16,14 @@ export const formatDateToBackend = (date: Date): string => {
  */
 export const formatHumanDate = (dateStr: string): string => {
   try {
-    const d = new Date(dateStr);
+    if (!dateStr) return dateStr;
+    let d: Date;
+    if (dateStr.includes('-') && dateStr.split('-').length === 3) {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      d = new Date(year, month - 1, day);
+    } else {
+      d = new Date(dateStr);
+    }
     if (isNaN(d.getTime())) return dateStr;
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   } catch (e) {
@@ -29,7 +36,9 @@ export const formatHumanDate = (dateStr: string): string => {
  */
 export const getWeekdayName = (dateStr: string): string => {
   try {
-    const d = new Date(dateStr);
+    if (!dateStr) return '';
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const d = new Date(year, month - 1, day);
     if (isNaN(d.getTime())) return '';
     return d.toLocaleDateString('en-US', { weekday: 'long' });
   } catch (e) {
@@ -42,14 +51,23 @@ export const getWeekdayName = (dateStr: string): string => {
  */
 export const timeToMinutes = (timeStr: string): number => {
   if (!timeStr) return 0;
-  const cleanTime = timeStr.trim();
-  const timeParts = cleanTime.split(' ');
+  const cleanTime = timeStr.trim().toUpperCase();
+  
+  // Handle case where there is no space before AM/PM (e.g. "09:00AM")
+  let normalizedTime = cleanTime;
+  if (cleanTime.endsWith('AM') && !cleanTime.includes(' AM')) {
+    normalizedTime = cleanTime.replace('AM', ' AM');
+  } else if (cleanTime.endsWith('PM') && !cleanTime.includes(' PM')) {
+    normalizedTime = cleanTime.replace('PM', ' PM');
+  }
+
+  const timeParts = normalizedTime.split(' ');
   const hm = timeParts[0].split(':');
   let hour = parseInt(hm[0]);
   const minute = parseInt(hm[1]);
   
   if (timeParts.length > 1) {
-    const ampm = timeParts[1].toUpperCase();
+    const ampm = timeParts[1];
     if (ampm === 'PM' && hour < 12) hour += 12;
     if (ampm === 'AM' && hour === 12) hour = 0;
   }

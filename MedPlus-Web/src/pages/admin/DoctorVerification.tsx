@@ -43,6 +43,71 @@ const DoctorVerification: React.FC = () => {
     verifyMutation.mutate({ doctorId, status, reason });
   };
 
+  const handleViewDocument = (url: string, title: string) => {
+    if (url.startsWith('data:')) {
+      const newWindow = window.open();
+      if (newWindow) {
+        newWindow.document.write(`
+          <html>
+            <head>
+              <title>${title} - MedPlus Admin</title>
+              <style>
+                body {
+                  margin: 0;
+                  background-color: #0f172a;
+                  display: flex;
+                  justify-content: center;
+                  align-items: center;
+                  min-height: 100vh;
+                  font-family: system-ui, -apple-system, sans-serif;
+                }
+                .container {
+                  max-width: 90%;
+                  max-height: 90vh;
+                  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                  border-radius: 16px;
+                  overflow: hidden;
+                  background: #1e293b;
+                  border: 1px solid #334155;
+                  padding: 20px;
+                  display: flex;
+                  flex-direction: column;
+                  align-items: center;
+                }
+                img, iframe {
+                  max-width: 100%;
+                  max-height: 80vh;
+                  object-fit: contain;
+                  border-radius: 8px;
+                  border: none;
+                }
+                .title {
+                  color: #f8fafc;
+                  font-weight: 800;
+                  margin-bottom: 16px;
+                  font-size: 14px;
+                  letter-spacing: 0.05em;
+                  text-transform: uppercase;
+                }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="title">${title}</div>
+                \${url.includes('pdf') || url.startsWith('data:application/pdf') 
+                  ? \`<iframe src="\${url}" width="800" height="600"></iframe>\` 
+                  : \`<img src="\${url}" alt="Document Image" />\`}
+              </div>
+            </body>
+          </html>
+        `);
+        newWindow.document.close();
+      }
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       {toast && (
@@ -142,27 +207,25 @@ const DoctorVerification: React.FC = () => {
               {selectedDoctor.registrationCertificateUrl && (
                 <div className="flex justify-between border-b border-slate-100 pb-2.5">
                   <span className="text-slate-400">Certificate Doc</span>
-                  <a 
-                    href={selectedDoctor.registrationCertificateUrl} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-medical-blue-600 hover:text-medical-blue-800 font-extrabold underline decoration-2 decoration-medical-blue-300"
+                  <button 
+                    type="button"
+                    onClick={() => handleViewDocument(selectedDoctor.registrationCertificateUrl!, 'Registration Certificate')}
+                    className="text-medical-blue-600 hover:text-medical-blue-800 font-extrabold underline decoration-2 decoration-medical-blue-300 cursor-pointer bg-transparent border-0 p-0 outline-none"
                   >
                     View Document
-                  </a>
+                  </button>
                 </div>
               )}
               {selectedDoctor.verificationDocumentUrl && (
                 <div className="flex justify-between border-b border-slate-100 pb-2.5">
                   <span className="text-slate-400">Identity Doc</span>
-                  <a 
-                    href={selectedDoctor.verificationDocumentUrl} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="text-medical-blue-600 hover:text-medical-blue-800 font-extrabold underline decoration-2 decoration-medical-blue-300"
+                  <button 
+                    type="button"
+                    onClick={() => handleViewDocument(selectedDoctor.verificationDocumentUrl!, 'Identity Document')}
+                    className="text-medical-blue-600 hover:text-medical-blue-800 font-extrabold underline decoration-2 decoration-medical-blue-300 cursor-pointer bg-transparent border-0 p-0 outline-none"
                   >
                     View Document
-                  </a>
+                  </button>
                 </div>
               )}
             </div>

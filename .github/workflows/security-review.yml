@@ -1,0 +1,50 @@
+name: Backend Security Review and Performance Audit
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  audit-backend:
+    name: Backend SAST, DAST, and Performance Audit
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install Project Dependencies
+        run: |
+          cd backend
+          npm ci || npm install
+
+      - name: Run Dependency Audit
+        run: |
+          cd backend
+          npm audit --audit-level=critical || true
+
+      - name: Run Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Trigger Security Review Generation
+        run: |
+          py scripts/generate_vulnerability_reports.py || python3 scripts/generate_vulnerability_reports.py || true
+
+      - name: Upload Security Reports as Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MedPlus-Backend-Security-Reports
+          path: |
+            Vulnerability Test Results/
+            *.xlsx
+          retention-days: 30

@@ -42,9 +42,6 @@ class SessionManager(private val context: Context) {
 
     fun getApiUrl(): String {
         val saved = prefs.getString(KEY_API_URL, null)
-        if (saved != null && (saved.contains("127.0.0.1") || saved.contains("localhost"))) {
-            return getDefaultApiUrl()
-        }
         return saved ?: getDefaultApiUrl()
     }
 
@@ -55,6 +52,9 @@ class SessionManager(private val context: Context) {
     }
 
     private fun getDefaultApiUrl(): String {
+        if (isEmulator()) {
+            return "http://10.0.2.2:5000/"
+        }
         return try {
             val resId = context.resources.getIdentifier("default_api_url", "string", context.packageName)
             if (resId != 0) {

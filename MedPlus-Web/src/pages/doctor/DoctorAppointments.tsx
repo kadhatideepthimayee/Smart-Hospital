@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { getDoctorAppointments } from '../../api/appointments';
-import { Card, Button, StatusBadge, Skeleton, Modal } from '../../components/UI';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getDoctorAppointments, updateAppointmentStatus, cancelAppointment } from '../../api/appointments';
+import { Card, Button, StatusBadge, Skeleton, Modal, Toast } from '../../components/UI';
 import { formatDateToBackend } from '../../lib/utils';
 import { Calendar, Clock, Eye, AlertCircle, ClipboardList } from 'lucide-react';
 import { Appointment } from '../../types';
 
 const DoctorAppointments: React.FC = () => {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'TODAY' | 'UPCOMING' | 'COMPLETED'>('TODAY');
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Fetch Doctor's appointments
   const { data: appointments = [], isLoading, error } = useQuery({
@@ -17,15 +19,54 @@ const DoctorAppointments: React.FC = () => {
     queryFn: getDoctorAppointments,
   });
 
+  // Mutation for updating status to COMPLETED
+  const statusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) => 
+      updateAppointmentStatus(id, status),
+    onSuccess: (data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['doctorAppointments'] });
+      queryClient.invalidateQueries({ queryKey: ['doctorQueue'] });
+      setToast({ message: `Appointment status updated to ${variables.status}.`, type: 'success' });
+      setIsDetailsOpen(false);
+      setSelectedAppt(null);
+    },
+    onError: (err: any) => {
+      setToast({ message: err.message || 'Failed to update appointment status.', type: 'error' });
+    }
+  });
+
+  // Mutation for cancelling appointment
+  const cancelMutation = useMutation({
+    mutationFn: cancelAppointment,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['doctorAppointments'] });
+      queryClient.invalidateQueries({ queryKey: ['doctorQueue'] });
+      setToast({ message: 'Appointment cancelled successfully.', type: 'success' });
+      setIsDetailsOpen(false);
+      setSelectedAppt(null);
+    },
+    onError: (err: any) => {
+      setToast({ message: err.message || 'Failed to cancel appointment.', type: 'error' });
+    }
+  });
+
   const getFilteredAppts = () => {
-    const todayStr = formatDateToBackend(new Date());
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = formatDateToBackend(today);
     
     return appointments.filter(appt => {
       if (activeTab === 'TODAY') {
         return appt.date === todayStr && appt.status !== 'COMPLETED' && appt.status !== 'CANCELLED';
       }
       if (activeTab === 'UPCOMING') {
-        return appt.date !== todayStr && appt.status !== 'COMPLETED' && appt.status !== 'CANCELLED';
+        try {
+          const apptDate = new Date(appt.date);
+          apptDate.setHours(0, 0, 0, 0);
+          return apptDate.getTime() > today.getTime() && appt.status !== 'COMPLETED' && appt.status !== 'CANCELLED';
+        } catch (e) {
+          return appt.date !== todayStr && appt.status !== 'COMPLETED' && appt.status !== 'CANCELLED';
+        }
       }
       return appt.status === activeTab;
     });
@@ -35,6 +76,15 @@ const DoctorAppointments: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      {/* Toast Alert */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
       {/* Tabs */}
       <div className="flex gap-2 border-b border-slate-100 pb-0.5 overflow-x-auto select-none scrollbar-none">
         {(['TODAY', 'UPCOMING', 'COMPLETED'] as const).map(tab => (
@@ -144,6 +194,32 @@ const DoctorAppointments: React.FC = () => {
               <span className="text-slate-400">Current Status</span>
               <StatusBadge status={selectedAppt.status} />
             </div>
+
+            {selectedAppt.status !== 'COMPLETED' && selectedAppt.status !== 'CANCELLED' && (
+              <div className="flex gap-3 pt-4 border-t border-slate-100 mt-4">
+                <Button 
+                  onClick={() => {
+                    if (window.confirm('Are you sure you want to cancel this appointment?')) {
+                      cancelMutation.mutate(selectedAppt._id);
+                    }
+                  }} 
+                  variant="danger" 
+                  className="flex-1 py-2.5 text-xs rounded-xl font-bold shadow-xs hover:-translate-y-0.5 active:translate-y-0"
+                  loading={cancelMutation.isPending}
+                >
+                  Cancel Appointment
+                </Button>
+                <Button 
+                  onClick={() => {
+                    statusMutation.mutate({ id: selectedAppt._id, status: 'COMPLETED' });
+                  }} 
+                  className="flex-1 py-2.5 text-xs rounded-xl font-bold shadow-md bg-emerald-650 hover:bg-emerald-700 active:bg-emerald-800 text-white border-0 hover:-translate-y-0.5 active:translate-y-0"
+                  loading={statusMutation.isPending}
+                >
+                  Mark Completed
+                </Button>
+              </div>
+            )}
 
             <Button onClick={() => setIsDetailsOpen(false)} className="w-full mt-6 py-2.5 rounded-xl text-xs font-bold shadow-md">
               Close Details

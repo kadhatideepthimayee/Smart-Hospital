@@ -21,6 +21,12 @@ export const getDoctorProfileByUid = async (uid: string): Promise<DoctorProfile>
     phone: data.phone || '',
     specialization: data.specialization || '',
     experience: data.experienceYears || 0, // Match field name
+    experienceYears: data.experienceYears || 0,
+    qualification: data.qualification || '',
+    registrationAuthority: data.registrationAuthority || '',
+    registrationNumber: data.registrationNumber || '',
+    registrationCertificateUrl: data.registrationCertificateUrl || '',
+    verificationDocumentUrl: data.verificationDocumentUrl || '',
     department: data.department || '',
     consultationFee: data.consultationFee || 0,
     clinicName: data.clinicName || 'MedPlus Clinic',
@@ -63,7 +69,9 @@ export const setupDoctorProfile = async (profileData: Partial<DoctorProfile>): P
     fullName: existingUser.fullName || profileData.fullName || '',
     email: existingUser.email || profileData.email || '',
     phone: existingUser.phone || profileData.phone || '',
-    experienceYears: profileData.experience !== undefined ? profileData.experience : undefined, // Map back
+    experienceYears: profileData.experienceYears !== undefined 
+      ? profileData.experienceYears 
+      : (profileData.experience !== undefined ? profileData.experience : undefined),
     verificationStatus: 'PENDING'
   };
 
@@ -96,6 +104,12 @@ export const getVerifiedDoctors = async (): Promise<DoctorProfile[]> => {
     phone: data.phone || '',
     specialization: data.specialization || '',
     experience: data.experienceYears || 0,
+    experienceYears: data.experienceYears || 0,
+    qualification: data.qualification || '',
+    registrationAuthority: data.registrationAuthority || '',
+    registrationNumber: data.registrationNumber || '',
+    registrationCertificateUrl: data.registrationCertificateUrl || '',
+    verificationDocumentUrl: data.verificationDocumentUrl || '',
     department: data.department || '',
     consultationFee: data.consultationFee || 0,
     clinicName: data.clinicName || 'MedPlus Clinic',

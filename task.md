@@ -21,6 +21,6 @@
 - [x] Update ViewModels and Navigation
     - [x] Refactor `AppNavigation.kt` to use `SessionManager` instead of Firebase Auth
     - [x] Refactor any ViewModels with direct references to `FirebaseAuth` or `FirebaseFirestore`
-- [ ] Verification and Testing
-    - [ ] Run Node.js backend locally
-    - [ ] Run Android app and verify registration, login, profile setup, and appointment booking
+- [/] Verification and Testing
+    - [x] Run Node.js backend locally
+    - [/] Run Android app and verify registration, login, profile setup, and appointment booking

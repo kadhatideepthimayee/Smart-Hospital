@@ -142,7 +142,7 @@ fun RegisterScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ── BRANDING ──────────────────────────────────────────────────
-            BrandHeaderCompact()
+            BrandHeaderCompact(onLogoClick = { showApiConfigDialog = true })
 
             Spacer(modifier = Modifier.height(32.dp))
 
@@ -307,7 +307,7 @@ fun RegisterScreen(
 // ════════════════════════════════════════════════════════════════════════════
 
 @Composable
-private fun BrandHeaderCompact() {
+private fun BrandHeaderCompact(onLogoClick: () -> Unit = {}) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
@@ -318,7 +318,8 @@ private fun BrandHeaderCompact() {
                 .size(48.dp)
                 .shadow(4.dp, CircleShape)
                 .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(Primary, PrimaryLight))),
+                .background(Brush.linearGradient(listOf(Primary, PrimaryLight)))
+                .clickable { onLogoClick() },
             contentAlignment = Alignment.Center
         ) {
             Icon(

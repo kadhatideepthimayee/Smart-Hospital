@@ -55,6 +55,9 @@ const BookAppointment: React.FC = () => {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [receipt, setReceipt] = useState<Appointment | null>(null);
 
+  const localToday = new Date();
+  const todayStr = `${localToday.getFullYear()}-${String(localToday.getMonth() + 1).padStart(2, '0')}-${String(localToday.getDate()).padStart(2, '0')}`;
+
   // Fetch verified doctors list
   const { data: verifiedDoctors = [], isLoading: isDoctorsLoading } = useQuery({
     queryKey: ['verifiedDoctors'],
@@ -136,7 +139,9 @@ const BookAppointment: React.FC = () => {
   // Convert HTML date (YYYY-MM-DD) to backend format (Aug 17, 2026)
   const getBackendFormattedDate = () => {
     if (!selectedDate) return '';
-    return formatDateToBackend(new Date(selectedDate));
+    const [year, month, day] = selectedDate.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
+    return formatDateToBackend(date);
   };
 
   const getFilteredAppointmentsForDate = () => {
@@ -172,6 +177,15 @@ const BookAppointment: React.FC = () => {
 
     // Generate slot times (hourly blocks)
     for (let current = startTimeMin; current < endTimeMin; current += 60) {
+      // Skip slots that have already passed for today
+      if (selectedDate === todayStr) {
+        const now = new Date();
+        const currentMinFromMidnight = now.getHours() * 60 + now.getMinutes();
+        if (current <= currentMinFromMidnight) {
+          continue;
+        }
+      }
+
       const currentEnd = current + 60;
 
       // Check lunch window
@@ -222,8 +236,6 @@ const BookAppointment: React.FC = () => {
       });
     }
   };
-
-  const todayStr = new Date().toISOString().split('T')[0];
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">

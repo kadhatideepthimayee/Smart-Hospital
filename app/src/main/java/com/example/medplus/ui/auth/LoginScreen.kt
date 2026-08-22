@@ -143,7 +143,7 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             // ── BRANDING ──────────────────────────────────────────────────
-            BrandHeader()
+            BrandHeader(onLogoClick = { showApiConfigDialog = true })
 
             Spacer(modifier = Modifier.height(40.dp))
 
@@ -380,14 +380,15 @@ fun LoginScreen(
 // ════════════════════════════════════════════════════════════════════════════
 
 @Composable
-private fun BrandHeader() {
+private fun BrandHeader(onLogoClick: () -> Unit = {}) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
                 .size(80.dp)
                 .shadow(8.dp, CircleShape)
                 .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(Primary, PrimaryLight))),
+                .background(Brush.linearGradient(listOf(Primary, PrimaryLight)))
+                .clickable { onLogoClick() },
             contentAlignment = Alignment.Center
         ) {
             Icon(

@@ -23,6 +23,9 @@ export interface DoctorProfile {
   department?: string;
   specialization?: string;
   experienceYears?: number;
+  experience?: number;
+  clinicName?: string;
+  clinicAddress?: string;
   registrationAuthority?: string;
   registrationNumber?: string;
   consultationFee?: number;

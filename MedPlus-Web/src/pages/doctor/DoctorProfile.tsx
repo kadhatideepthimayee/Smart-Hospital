@@ -152,15 +152,21 @@ const DoctorProfile: React.FC = () => {
                 <span>Medical Credentials</span>
               </h3>
 
-              <form onSubmit={handleSaveProfile} className="space-y-4">
+              <div className="bg-amber-50/70 border border-amber-200/50 text-amber-800 rounded-xl p-3.5 text-xs font-semibold mb-6 flex items-start gap-2.5 shadow-xs select-none">
+                <ShieldCheck size={16} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                <span>Your professional credentials and verification details are locked and read-only. For scheduling and calendar updates, please visit the <strong>Availability</strong> section.</span>
+              </div>
+
+              <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
                 
                 {/* Specialization selection */}
                 <div className="space-y-1.5">
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider select-none">Specialty Specialization</label>
                   <select
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-white"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-slate-50 cursor-not-allowed"
                     value={specialization}
                     onChange={(e) => setSpecialization(e.target.value)}
+                    disabled={true}
                   >
                     {SPECIALIZATIONS.map(spec => (
                       <option key={spec} value={spec}>{spec}</option>
@@ -173,12 +179,12 @@ const DoctorProfile: React.FC = () => {
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider select-none">Professional Qualification</label>
                   <input
                     type="text"
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-white"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-slate-50 cursor-not-allowed"
                     placeholder="e.g. MBBS, MD (Cardiology)"
                     value={qualification}
                     onChange={(e) => setQualification(e.target.value)}
                     required
-                    disabled={updateMutation.isPending}
+                    disabled={true}
                   />
                 </div>
 
@@ -189,11 +195,11 @@ const DoctorProfile: React.FC = () => {
                     <input
                       type="number"
                       min={0}
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-white"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-slate-50 cursor-not-allowed"
                       value={experienceYears}
                       onChange={(e) => setExperienceYears(Number(e.target.value))}
                       required
-                      disabled={updateMutation.isPending}
+                      disabled={true}
                     />
                   </div>
 
@@ -203,11 +209,11 @@ const DoctorProfile: React.FC = () => {
                     <input
                       type="number"
                       min={0}
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-white"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-slate-50 cursor-not-allowed"
                       value={consultationFee}
                       onChange={(e) => setConsultationFee(Number(e.target.value))}
                       required
-                      disabled={updateMutation.isPending}
+                      disabled={true}
                     />
                   </div>
                 </div>
@@ -223,12 +229,12 @@ const DoctorProfile: React.FC = () => {
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider select-none">Registration Authority</label>
                     <input
                       type="text"
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-white"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-slate-50 cursor-not-allowed"
                       placeholder="e.g. State Medical Council"
                       value={registrationAuthority}
                       onChange={(e) => setRegistrationAuthority(e.target.value)}
                       required
-                      disabled={updateMutation.isPending}
+                      disabled={true}
                     />
                   </div>
 
@@ -236,12 +242,12 @@ const DoctorProfile: React.FC = () => {
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider select-none">Registration Number</label>
                     <input
                       type="text"
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-white"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-slate-50 cursor-not-allowed"
                       placeholder="e.g. Reg-7890"
                       value={registrationNumber}
                       onChange={(e) => setRegistrationNumber(e.target.value)}
                       required
-                      disabled={updateMutation.isPending}
+                      disabled={true}
                     />
                   </div>
                 </div>
@@ -251,11 +257,11 @@ const DoctorProfile: React.FC = () => {
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider select-none">Certificate Document URL</label>
                     <input
                       type="text"
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-white"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-slate-50 cursor-not-allowed"
                       placeholder="e.g. http://site.com/certificate.pdf"
                       value={registrationCertificateUrl}
                       onChange={(e) => setRegistrationCertificateUrl(e.target.value)}
-                      disabled={updateMutation.isPending}
+                      disabled={true}
                     />
                   </div>
 
@@ -263,11 +269,11 @@ const DoctorProfile: React.FC = () => {
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider select-none">Identity Document URL</label>
                     <input
                       type="text"
-                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-white"
+                      className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all duration-200 bg-slate-50 cursor-not-allowed"
                       placeholder="e.g. http://site.com/id.jpg"
                       value={verificationDocumentUrl}
                       onChange={(e) => setVerificationDocumentUrl(e.target.value)}
-                      disabled={updateMutation.isPending}
+                      disabled={true}
                     />
                   </div>
                 </div>
@@ -276,22 +282,20 @@ const DoctorProfile: React.FC = () => {
                 <div className="space-y-1.5 mt-4">
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider select-none">Clinical Bio / Description</label>
                   <textarea
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs leading-relaxed font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all resize-none bg-white"
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs leading-relaxed font-semibold focus:ring-4 focus:ring-medical-blue-500/10 focus:border-medical-blue-500 outline-none transition-all resize-none bg-slate-50 cursor-not-allowed"
                     rows={4}
                     placeholder="Briefly describe your clinical specialties, treatment focus, and patient care philosophy..."
                     value={bio}
                     onChange={(e) => setBio(e.target.value)}
-                    disabled={updateMutation.isPending}
+                    disabled={true}
                   />
                 </div>
 
-                <Button 
-                  type="submit" 
-                  className="w-full mt-6 py-2.5 rounded-xl text-xs font-bold shadow-md hover:-translate-y-0.5 active:translate-y-0" 
-                  loading={updateMutation.isPending}
-                >
-                  Save Profile Details
-                </Button>
+                <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-4 mt-6 text-center select-none">
+                  <p className="text-xs font-bold text-slate-500">
+                    Profile credentials and verification details are locked.
+                  </p>
+                </div>
               </form>
             </Card>
           </div>
